@@ -2,7 +2,7 @@ import unittest
 
 import torch
 
-from cremav1.models.baseline import AVBaseline, AudioBaseline, VisualBaseline
+from AV_v1.models.baseline import AVBaseline, AudioBaseline, VisualBaseline
 
 
 class CremadBaselineTest(unittest.TestCase):

@@ -11,6 +11,7 @@ from .cremad import (
     split_samples_by_actor,
 )
 from .ks import KSDataset, KSSample, discover_ks_samples, load_ks_classes
+from .ave import AVEDataset, AVESample, discover_ave_samples
 
 __all__ = [
     "CREMADAVDataset",
@@ -27,4 +28,7 @@ __all__ = [
     "KSSample",
     "discover_ks_samples",
     "load_ks_classes",
+    "AVEDataset",
+    "AVESample",
+    "discover_ave_samples",
 ]

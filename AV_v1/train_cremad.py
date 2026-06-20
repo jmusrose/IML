@@ -20,13 +20,13 @@ import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
-from cremav1.datasets import (
+from AV_v1.datasets import (
     CREMADAVDataset,
     ResizeToTensorNormalize,
     discover_cremad_samples,
     split_samples_from_csv,
 )
-from cremav1.models import AVBaseline, AudioBaseline, VisualBaseline
+from AV_v1.models import AVBaseline, AudioBaseline, VisualBaseline
 
 
 def set_seed(seed: int, deterministic: bool = False) -> None:

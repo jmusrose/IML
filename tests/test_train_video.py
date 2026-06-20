@@ -1,6 +1,6 @@
 import unittest
 
-from cremav1.train_video import build_dataset_args
+from AV_v1.train_video import build_dataset_args
 
 
 class TrainVideoTest(unittest.TestCase):

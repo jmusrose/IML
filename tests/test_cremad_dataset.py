@@ -5,7 +5,7 @@ from tempfile import TemporaryDirectory
 import numpy as np
 from PIL import Image
 
-from cremav1.datasets.cremad import CREMADVisualDataset, select_frame_indices
+from AV_v1.datasets.cremad import CREMADVisualDataset, select_frame_indices
 
 
 class CremadDatasetTest(unittest.TestCase):

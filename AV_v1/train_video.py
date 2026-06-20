@@ -7,13 +7,13 @@ from pathlib import Path
 if __package__ is None or __package__ == "":
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from cremav1 import train_cremad, train_ks
-from cremav1.datasets import load_ks_classes
+from AV_v1 import train_cremad, train_ks, train_ave
+from AV_v1.datasets import load_ks_classes
 
 
 def build_dataset_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Train audio-video baselines on CREMA-D or KineticSound.")
-    parser.add_argument("--dataset", choices=["cremad", "ks"], required=True)
+    parser = argparse.ArgumentParser(description="Train audio-video baselines on CREMA-D, KineticSound, or AVE.")
+    parser.add_argument("--dataset", choices=["cremad", "ks", "ave"], required=True)
     parser.add_argument("--data-root", type=str, default=None)
     parser.add_argument("--output-dir", type=str, default=None)
     parser.add_argument("--modality", choices=["av", "audio", "visual"], default="av")
@@ -49,7 +49,7 @@ def build_dataset_args(argv: list[str] | None = None) -> argparse.Namespace:
         args.hop_length = 160 if args.hop_length is None else args.hop_length
         args.win_length = 400 if args.win_length is None else args.win_length
         args.fps = args.use_video_frames
-    else:
+    elif args.dataset == "ks":
         args.data_root = args.data_root or "dataset/kinect_sound"
         args.output_dir = args.output_dir or "runs/video_ks"
         args.num_classes = len(load_ks_classes(args.class_file))
@@ -57,6 +57,10 @@ def build_dataset_args(argv: list[str] | None = None) -> argparse.Namespace:
         args.n_fft = 256 if args.n_fft is None else args.n_fft
         args.hop_length = 128 if args.hop_length is None else args.hop_length
         args.win_length = 256 if args.win_length is None else args.win_length
+    else:  # ave
+        args.data_root = args.data_root or "dataset/AVE"
+        args.output_dir = args.output_dir or "runs/video_ave"
+        args.num_classes = 28
 
     return args
 
@@ -65,8 +69,10 @@ def main() -> None:
     args = build_dataset_args()
     if args.dataset == "cremad":
         train_cremad.run_training(args)
-    else:
+    elif args.dataset == "ks":
         train_ks.run_training(args)
+    else:
+        train_ave.run_training(args)
 
 
 if __name__ == "__main__":

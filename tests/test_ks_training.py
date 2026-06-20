@@ -7,7 +7,7 @@ from tempfile import TemporaryDirectory
 import numpy as np
 from PIL import Image
 
-from cremav1.datasets.ks import KSDataset, discover_ks_samples, load_ks_classes
+from AV_v1.datasets.ks import KSDataset, discover_ks_samples, load_ks_classes
 
 
 def write_wav(path: Path, frequency: float = 440.0, sample_rate: int = 16000) -> None:

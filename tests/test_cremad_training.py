@@ -9,7 +9,7 @@ import numpy as np
 from PIL import Image
 import torch
 
-from cremav1.datasets.cremad import (
+from AV_v1.datasets.cremad import (
     CREMADAVDataset,
     ResizeToTensorNormalize,
     discover_cremad_samples,
@@ -17,8 +17,8 @@ from cremav1.datasets.cremad import (
     split_samples_random,
     split_samples_by_actor,
 )
-from cremav1.models.baseline import AVBaseline, AudioBaseline
-from cremav1.train_cremad import (
+from AV_v1.models.baseline import AVBaseline, AudioBaseline
+from AV_v1.train_cremad import (
     append_epoch_log,
     create_dataloaders,
     evaluate,
