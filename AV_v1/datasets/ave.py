@@ -54,6 +54,28 @@ _SPLIT_FILENAMES = {
     "val": "valSet.txt",
     "test": "testSet.txt",
 }
+_EXPECTED_AUDIO_SHAPE = (257, 1004)
+
+
+def _read_ave_audio_array(path: Path) -> np.ndarray:
+    with path.open("rb") as fh:
+        spec = pickle.load(fh)
+
+    array = np.asarray(spec, dtype=np.float32)
+    if array.shape != _EXPECTED_AUDIO_SHAPE:
+        raise ValueError(
+            f"Expected AVE audio spectrogram shape {_EXPECTED_AUDIO_SHAPE}, "
+            f"got {tuple(array.shape)} for {path}."
+        )
+    return array
+
+
+def _has_valid_ave_audio(path: Path) -> bool:
+    try:
+        _read_ave_audio_array(path)
+    except (EOFError, OSError, pickle.PickleError, TypeError, ValueError):
+        return False
+    return True
 
 
 def discover_ave_samples(
@@ -111,6 +133,8 @@ def discover_ave_samples(
 
             audio_path = audio_root / f"{video_id}.pkl"
             if not audio_path.exists():
+                continue
+            if not _has_valid_ave_audio(audio_path):
                 continue
 
             image_dir = image_root / video_id
@@ -190,11 +214,8 @@ class AVEDataset(Dataset):
         return len(self.samples)
 
     def _load_audio(self, sample: AVESample) -> torch.Tensor:
-        with open(sample.audio_path, "rb") as fh:
-            spec = pickle.load(fh, encoding="latin1") if False else pickle.load(fh)
-        if not isinstance(spec, np.ndarray):
-            spec = np.array(spec, dtype=np.float32)
-        tensor = torch.from_numpy(spec.astype(np.float32))
+        spec = _read_ave_audio_array(sample.audio_path)
+        tensor = torch.from_numpy(np.ascontiguousarray(spec)).clone()
         return tensor.unsqueeze(0)  # (1, freq, time)
 
     def _load_visual(self, sample: AVESample) -> torch.Tensor:

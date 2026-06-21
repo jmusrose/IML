@@ -5,12 +5,13 @@ from tempfile import TemporaryDirectory
 
 import numpy as np
 from PIL import Image
+from torch.utils.data import DataLoader
 
 from AV_v1.datasets.ave import AVEDataset, discover_ave_samples
 
 
-def write_pkl(path: Path, shape: tuple[int, int] = (257, 1004)) -> None:
-    spec = np.random.rand(*shape).astype(np.float32)
+def write_pkl(path: Path, shape: tuple[int, ...] = (257, 1004)) -> None:
+    spec = np.asfortranarray(np.random.rand(*shape).astype(np.float32))
     with open(path, "wb") as fh:
         pickle.dump(spec, fh)
 
@@ -53,6 +54,22 @@ class AVEDatasetTest(unittest.TestCase):
             self.assertIn("Dog", class_to_idx)
             self.assertEqual(len(class_to_idx), 2)
 
+    def test_discover_ave_samples_skips_invalid_audio_shape(self):
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            make_ave_root(root)
+            bad_video_id = "video_bad"
+            write_pkl(root / "Audio-1004-SE" / f"{bad_video_id}.pkl", shape=(0,))
+            bad_image_dir = root / "Image-01-FPS-SE" / bad_video_id
+            bad_image_dir.mkdir(parents=True)
+            Image.new("RGB", (16, 16), color=(0, 0, 0)).save(bad_image_dir / "00000.jpg")
+            with (root / "trainSet.txt").open("a", encoding="utf-8") as fh:
+                fh.write(f"Dog&{bad_video_id}&good&0&10\n")
+
+            train_samples, _ = discover_ave_samples(root, split="train")
+
+            self.assertNotIn(bad_video_id, {sample.sample_id for sample in train_samples})
+
     def test_dataset_item_av_shape(self):
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -88,6 +105,21 @@ class AVEDatasetTest(unittest.TestCase):
             self.assertIn("audio", item)
             self.assertNotIn("visual", item)
             self.assertEqual(tuple(item["audio"].shape), (1, 257, 1004))
+            self.assertTrue(item["audio"].is_contiguous())
+
+    def test_dataset_audio_batches_with_worker_collation(self):
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            make_ave_root(root)
+
+            samples, _ = discover_ave_samples(root, split="train")
+            dataset = AVEDataset(samples, modality="audio", mode="test")
+            loader = DataLoader(dataset, batch_size=2, num_workers=1)
+
+            batch = next(iter(loader))
+
+            self.assertEqual(tuple(batch["audio"].shape), (2, 1, 257, 1004))
+            self.assertTrue(batch["audio"].is_contiguous())
 
     def test_val_and_test_splits(self):
         with TemporaryDirectory() as tmpdir:

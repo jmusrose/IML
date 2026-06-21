@@ -1,0 +1,23 @@
+{
+  "data_path": "dataset/mosi.pkl",
+  "output_dir": "runs/mosi_baseline",
+  "bert_model_name": "bert-base-uncased",
+  "vision_dim": 47,
+  "audio_dim": 74,
+  "hidden_sz": 50,
+  "num_heads": 5,
+  "num_layers": 3,
+  "conv_kernel_size": 3,
+  "dropout": 0.1,
+  "max_text_length": 64,
+  "epochs": 40,
+  "batch_size": 16,
+  "lr": 2e-05,
+  "weight_decay": 0.0001,
+  "seed": 0,
+  "num_workers": 4,
+  "device": "cuda",
+  "pin_memory": false,
+  "deterministic": false,
+  "no_progress": false
+}

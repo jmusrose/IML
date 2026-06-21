@@ -1,0 +1,2 @@
+"""CMU-MOSI training package."""
+
