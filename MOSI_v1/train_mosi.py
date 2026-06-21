@@ -185,7 +185,7 @@ def create_dataloaders(args: argparse.Namespace) -> tuple[DataLoader, DataLoader
         raise ImportError("transformers is required to tokenize MOSI text for training.") from exc
 
     splits = load_mosi_splits(args.data_path)
-    tokenizer = BertTokenizer.from_pretrained(args.bert_model_name)
+    tokenizer = BertTokenizer.from_pretrained(args.bert_model_name, local_files_only=args.local_files_only)
     collate = partial(mosi_collate_fn, tokenizer=tokenizer, max_text_length=args.max_text_length)
     datasets = {name: MOSIDataset(samples) for name, samples in splits.items()}
 
@@ -255,6 +255,7 @@ def run_training(args: argparse.Namespace) -> dict[str, float]:
     train_loader, val_loader, test_loader, sizes = create_dataloaders(args)
     model = MOSIRegressionModel(
         bert_model_name=args.bert_model_name,
+        local_files_only=args.local_files_only,
         vision_dim=args.vision_dim,
         audio_dim=args.audio_dim,
         hidden_sz=args.hidden_sz,
@@ -333,6 +334,7 @@ def build_arg_parser(
     parser.add_argument("--data-path", type=str, default=default_data_path)
     parser.add_argument("--output-dir", type=str, default=default_output_dir)
     parser.add_argument("--bert-model-name", type=str, default="bert-base-uncased")
+    parser.add_argument("--allow-download", action="store_false", dest="local_files_only")
     parser.add_argument("--vision-dim", type=int, default=default_vision_dim)
     parser.add_argument("--audio-dim", type=int, default=74)
     parser.add_argument("--hidden-sz", type=int, default=50)
@@ -351,6 +353,7 @@ def build_arg_parser(
     parser.add_argument("--pin-memory", action="store_true")
     parser.add_argument("--deterministic", action="store_true")
     parser.add_argument("--no-progress", action="store_true")
+    parser.set_defaults(local_files_only=True)
     return parser
 
 

@@ -7,7 +7,7 @@ import torch.nn as nn
 
 
 class BertTextEncoder(nn.Module):
-    def __init__(self, model_name: str = "bert-base-uncased") -> None:
+    def __init__(self, model_name: str = "bert-base-uncased", local_files_only: bool = True) -> None:
         super().__init__()
         try:
             from transformers import BertModel
@@ -17,7 +17,7 @@ class BertTextEncoder(nn.Module):
                 "Install transformers or pass a custom text_encoder."
             ) from exc
 
-        self.bert = BertModel.from_pretrained(model_name)
+        self.bert = BertModel.from_pretrained(model_name, local_files_only=local_files_only)
         self.output_dim = self.bert.config.hidden_size
 
     def forward(self, input_ids: torch.Tensor, attention_mask: torch.Tensor | None = None):
@@ -75,6 +75,7 @@ class MOSIRegressionModel(nn.Module):
     def __init__(
         self,
         bert_model_name: str = "bert-base-uncased",
+        local_files_only: bool = True,
         text_encoder: nn.Module | None = None,
         text_dim: int | None = None,
         vision_dim: int = 47,
@@ -86,7 +87,9 @@ class MOSIRegressionModel(nn.Module):
         dropout: float = 0.1,
     ) -> None:
         super().__init__()
-        self.text_encoder = text_encoder if text_encoder is not None else BertTextEncoder(bert_model_name)
+        self.text_encoder = (
+            text_encoder if text_encoder is not None else BertTextEncoder(bert_model_name, local_files_only=local_files_only)
+        )
         inferred_text_dim = getattr(self.text_encoder, "output_dim", None)
         if inferred_text_dim is None and hasattr(self.text_encoder, "config"):
             inferred_text_dim = getattr(self.text_encoder.config, "hidden_size", None)

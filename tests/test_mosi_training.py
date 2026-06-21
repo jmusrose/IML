@@ -159,6 +159,51 @@ class MOSITrainingTest(unittest.TestCase):
         self.assertEqual(mosei_args.output_dir, "runs/mosei_baseline")
         self.assertEqual(mosei_args.vision_dim, 35)
 
+    def test_default_smoke_configs_run_mosi_then_mosei(self):
+        from MOSI_v1.test_mosi_mosei import iter_default_configs, parse_args
+
+        configs = list(iter_default_configs("both"))
+        args = parse_args([])
+
+        self.assertEqual([config.name for config in configs], ["mosi", "mosei"])
+        self.assertEqual([str(config.data_path) for config in configs], ["dataset/mosi.pkl", "dataset/mosei.pkl"])
+        self.assertEqual([config.vision_dim for config in configs], [47, 35])
+        self.assertTrue(args.local_files_only)
+
+    def test_smoke_test_dataset_runs_one_batch_with_injected_components(self):
+        from MOSI_v1.test_mosi_mosei import DatasetSmokeConfig, smoke_test_dataset
+
+        with TemporaryDirectory() as tmpdir:
+            pkl_path = Path(tmpdir) / "mosi.pkl"
+            write_tiny_mosi(pkl_path)
+            config = DatasetSmokeConfig(name="tiny", data_path=pkl_path, vision_dim=47)
+
+            summary = smoke_test_dataset(
+                config,
+                split="test",
+                tokenizer=TinyTokenizer(),
+                model_factory=lambda vision_dim: MOSIRegressionModel(
+                    text_encoder=TinyTextEncoder(hidden_size=8),
+                    text_dim=8,
+                    vision_dim=vision_dim,
+                    audio_dim=74,
+                    hidden_sz=10,
+                    num_heads=2,
+                    num_layers=1,
+                ),
+                batch_size=1,
+                max_text_length=8,
+                max_batches=1,
+                device=torch.device("cpu"),
+            )
+
+            self.assertEqual(summary["name"], "tiny")
+            self.assertEqual(summary["split_sizes"], {"train": 2, "dev": 1, "test": 1})
+            self.assertEqual(summary["batch_shapes"]["vision"], (1, 3, 47))
+            self.assertEqual(summary["batch_shapes"]["audio"], (1, 3, 74))
+            self.assertEqual(summary["num_batches"], 1)
+            self.assertIn("acc7", summary["metrics"])
+
 
 if __name__ == "__main__":
     unittest.main()
