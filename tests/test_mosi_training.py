@@ -222,6 +222,30 @@ class MOSITrainingTest(unittest.TestCase):
         self.assertEqual(mosei_args.output_dir, "runs/mosei_baseline")
         self.assertEqual(mosei_args.vision_dim, 35)
 
+    def test_joint_mosi_mosei_entry_builds_requested_configs(self):
+        from MOSI_v1 import train_mosi_mosei
+
+        args = train_mosi_mosei.parse_args(["--datasets", "mosei", "mosi", "--epochs", "1", "--no-progress"])
+        configs = train_mosi_mosei.build_dataset_args(args)
+
+        self.assertEqual([config.dataset_name for config in configs], ["mosei", "mosi"])
+        self.assertEqual([config.data_path for config in configs], ["dataset/mosei.pkl", "dataset/mosi.pkl"])
+        self.assertEqual([config.output_dir for config in configs], ["runs/mosei_baseline", "runs/mosi_baseline"])
+        self.assertEqual([config.vision_dim for config in configs], [35, 47])
+        self.assertEqual([config.epochs for config in configs], [1, 1])
+
+    def test_joint_mosi_mosei_main_runs_both_datasets(self):
+        from unittest.mock import patch
+
+        from MOSI_v1 import train_mosi_mosei
+
+        with patch.object(train_mosi_mosei, "run_training", return_value={"mae": 0.1}) as run_training:
+            results = train_mosi_mosei.main(["--datasets", "mosi", "mosei", "--epochs", "1", "--no-progress"])
+
+        self.assertEqual([call.args[0].dataset_name for call in run_training.call_args_list], ["mosi", "mosei"])
+        self.assertEqual(set(results), {"mosi", "mosei"})
+        self.assertEqual(results["mosi"]["mae"], 0.1)
+
 
 if __name__ == "__main__":
     unittest.main()
