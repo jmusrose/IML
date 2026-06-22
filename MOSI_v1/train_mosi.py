@@ -94,6 +94,38 @@ def forward_batch(model: nn.Module, batch: dict[str, Any]) -> torch.Tensor:
     )
 
 
+def forward_and_losses(
+    model: nn.Module,
+    batch: dict[str, Any],
+    criterion: nn.Module,
+) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    if hasattr(model, "forward_with_modal_predictions"):
+        outputs = model.forward_with_modal_predictions(
+            batch["input_ids"],
+            batch["attention_mask"],
+            batch["vision"],
+            batch["audio"],
+            batch["vision_mask"],
+            batch["audio_mask"],
+        )
+        predictions = outputs["prediction"]
+        fusion_loss = criterion(predictions, batch["labels"])
+        text_loss = criterion(outputs["text_prediction"], batch["labels"])
+        vision_loss = criterion(outputs["vision_prediction"], batch["labels"])
+        audio_loss = criterion(outputs["audio_prediction"], batch["labels"])
+        return predictions, {
+            "loss": fusion_loss + text_loss + vision_loss + audio_loss,
+            "fusion_loss": fusion_loss,
+            "text_loss": text_loss,
+            "vision_loss": vision_loss,
+            "audio_loss": audio_loss,
+        }
+
+    predictions = forward_batch(model, batch)
+    loss = criterion(predictions, batch["labels"])
+    return predictions, {"loss": loss}
+
+
 def train_one_epoch(
     model: nn.Module,
     loader: DataLoader,
@@ -104,7 +136,7 @@ def train_one_epoch(
 ) -> dict[str, float]:
     model.train()
     criterion = nn.MSELoss()
-    total_loss = 0.0
+    loss_totals: dict[str, float] = {}
     total_samples = 0
     all_preds: list[torch.Tensor] = []
     all_labels: list[torch.Tensor] = []
@@ -117,24 +149,27 @@ def train_one_epoch(
     for raw_batch in iterator:
         batch = batch_to_device(raw_batch, device)
         optimizer.zero_grad(set_to_none=True)
-        predictions = forward_batch(model, batch)
-        loss = criterion(predictions, batch["labels"])
+        predictions, losses = forward_and_losses(model, batch, criterion)
+        loss = losses["loss"]
         loss.backward()
         optimizer.step()
 
         batch_size = batch["labels"].shape[0]
-        total_loss += float(loss.item()) * batch_size
+        for name, value in losses.items():
+            loss_totals[name] = loss_totals.get(name, 0.0) + float(value.item()) * batch_size
         total_samples += batch_size
         all_preds.append(predictions.detach().cpu())
         all_labels.append(batch["labels"].detach().cpu())
         if show_progress:
-            iterator.set_postfix({"loss": total_loss / max(1, total_samples)})
+            iterator.set_postfix({"loss": loss_totals.get("loss", 0.0) / max(1, total_samples)})
 
-    return regression_metrics(
+    metrics = regression_metrics(
         torch.cat(all_preds),
         torch.cat(all_labels),
-        total_loss / max(1, total_samples),
+        loss_totals.get("loss", 0.0) / max(1, total_samples),
     )
+    metrics.update({name: total / max(1, total_samples) for name, total in loss_totals.items()})
+    return metrics
 
 
 @torch.no_grad()
@@ -148,7 +183,7 @@ def evaluate(
 ) -> dict[str, float]:
     model.eval()
     criterion = nn.MSELoss()
-    total_loss = 0.0
+    loss_totals: dict[str, float] = {}
     total_samples = 0
     all_preds: list[torch.Tensor] = []
     all_labels: list[torch.Tensor] = []
@@ -160,22 +195,24 @@ def evaluate(
 
     for raw_batch in iterator:
         batch = batch_to_device(raw_batch, device)
-        predictions = forward_batch(model, batch)
-        loss = criterion(predictions, batch["labels"])
+        predictions, losses = forward_and_losses(model, batch, criterion)
 
         batch_size = batch["labels"].shape[0]
-        total_loss += float(loss.item()) * batch_size
+        for name, value in losses.items():
+            loss_totals[name] = loss_totals.get(name, 0.0) + float(value.item()) * batch_size
         total_samples += batch_size
         all_preds.append(predictions.detach().cpu())
         all_labels.append(batch["labels"].detach().cpu())
         if show_progress:
-            iterator.set_postfix({"loss": total_loss / max(1, total_samples)})
+            iterator.set_postfix({"loss": loss_totals.get("loss", 0.0) / max(1, total_samples)})
 
-    return regression_metrics(
+    metrics = regression_metrics(
         torch.cat(all_preds),
         torch.cat(all_labels),
-        total_loss / max(1, total_samples),
+        loss_totals.get("loss", 0.0) / max(1, total_samples),
     )
+    metrics.update({name: total / max(1, total_samples) for name, total in loss_totals.items()})
+    return metrics
 
 
 def create_dataloaders(args: argparse.Namespace) -> tuple[DataLoader, DataLoader, DataLoader, dict[str, int]]:
@@ -185,7 +222,7 @@ def create_dataloaders(args: argparse.Namespace) -> tuple[DataLoader, DataLoader
         raise ImportError("transformers is required to tokenize MOSI text for training.") from exc
 
     splits = load_mosi_splits(args.data_path)
-    tokenizer = BertTokenizer.from_pretrained(args.bert_model_name, local_files_only=args.local_files_only)
+    tokenizer = BertTokenizer.from_pretrained(args.bert_model_name)
     collate = partial(mosi_collate_fn, tokenizer=tokenizer, max_text_length=args.max_text_length)
     datasets = {name: MOSIDataset(samples) for name, samples in splits.items()}
 
@@ -255,7 +292,6 @@ def run_training(args: argparse.Namespace) -> dict[str, float]:
     train_loader, val_loader, test_loader, sizes = create_dataloaders(args)
     model = MOSIRegressionModel(
         bert_model_name=args.bert_model_name,
-        local_files_only=args.local_files_only,
         vision_dim=args.vision_dim,
         audio_dim=args.audio_dim,
         hidden_sz=args.hidden_sz,
@@ -334,7 +370,6 @@ def build_arg_parser(
     parser.add_argument("--data-path", type=str, default=default_data_path)
     parser.add_argument("--output-dir", type=str, default=default_output_dir)
     parser.add_argument("--bert-model-name", type=str, default="bert-base-uncased")
-    parser.add_argument("--allow-download", action="store_false", dest="local_files_only")
     parser.add_argument("--vision-dim", type=int, default=default_vision_dim)
     parser.add_argument("--audio-dim", type=int, default=74)
     parser.add_argument("--hidden-sz", type=int, default=50)
@@ -353,7 +388,6 @@ def build_arg_parser(
     parser.add_argument("--pin-memory", action="store_true")
     parser.add_argument("--deterministic", action="store_true")
     parser.add_argument("--no-progress", action="store_true")
-    parser.set_defaults(local_files_only=True)
     return parser
 
 
