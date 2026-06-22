@@ -104,6 +104,29 @@ def compute_accuracy(logits: torch.Tensor, labels: torch.Tensor) -> int:
     return int((predictions == labels).sum().item())
 
 
+def macro_f1_score(predictions: torch.Tensor, labels: torch.Tensor, num_classes: int | None = None) -> float:
+    predictions = predictions.detach().view(-1).cpu()
+    labels = labels.detach().view(-1).cpu()
+    if predictions.numel() == 0:
+        return 0.0
+    if num_classes is None:
+        num_classes = int(torch.cat([predictions, labels]).max().item()) + 1
+
+    f1_values = []
+    for class_index in range(num_classes):
+        pred_positive = predictions == class_index
+        label_positive = labels == class_index
+        tp = float((pred_positive & label_positive).sum().item())
+        fp = float((pred_positive & ~label_positive).sum().item())
+        fn = float((~pred_positive & label_positive).sum().item())
+        if tp == 0 and fp == 0 and fn == 0:
+            continue
+        precision = tp / max(tp + fp, 1.0)
+        recall = tp / max(tp + fn, 1.0)
+        f1_values.append(0.0 if precision + recall == 0 else 2 * precision * recall / (precision + recall))
+    return float(sum(f1_values) / max(len(f1_values), 1))
+
+
 def forward_and_losses(
     model: nn.Module,
     inputs: tuple[torch.Tensor, ...],
@@ -127,6 +150,8 @@ def forward_and_losses(
             "fusion_loss": fusion_loss,
             "audio_loss": audio_loss,
             "visual_loss": visual_loss,
+            "audio_acc": (outputs["audio_logits"].argmax(dim=1) == labels).float().mean(),
+            "visual_acc": (outputs["visual_logits"].argmax(dim=1) == labels).float().mean(),
         }
         if fgm_state is not None:
             batch_size = labels.size(0)
@@ -187,9 +212,19 @@ def update_metric_totals(
         totals[name] = totals.get(name, 0.0) + float(value.item()) * batch_size
 
 
-def average_metrics(totals: dict[str, float], total_samples: int, total_correct: int) -> dict[str, float]:
+def average_metrics(
+    totals: dict[str, float],
+    total_samples: int,
+    total_correct: int,
+    predictions: list[torch.Tensor] | None = None,
+    labels: list[torch.Tensor] | None = None,
+) -> dict[str, float]:
     metrics = {name: value / max(1, total_samples) for name, value in totals.items()}
     metrics["acc"] = total_correct / max(1, total_samples)
+    if predictions and labels:
+        all_predictions = torch.cat(predictions)
+        all_labels = torch.cat(labels)
+        metrics["macro_f1"] = macro_f1_score(all_predictions, all_labels)
     return metrics
 
 
@@ -208,6 +243,8 @@ def train_one_epoch(
     totals: dict[str, float] = {}
     total_correct = 0
     total_samples = 0
+    all_predictions: list[torch.Tensor] = []
+    all_labels: list[torch.Tensor] = []
 
     iterator = loader
     if show_progress:
@@ -234,8 +271,11 @@ def train_one_epoch(
 
         batch_size = labels.size(0)
         update_metric_totals(totals, losses, batch_size)
-        total_correct += compute_accuracy(logits.detach(), labels)
+        predictions = logits.detach().argmax(dim=1)
+        total_correct += int((predictions == labels).sum().item())
         total_samples += batch_size
+        all_predictions.append(predictions.cpu())
+        all_labels.append(labels.detach().cpu())
 
         if show_progress:
             postfix = {"loss": totals["loss"] / max(1, total_samples)}
@@ -248,7 +288,7 @@ def train_one_epoch(
             postfix["acc"] = total_correct / max(1, total_samples)
             iterator.set_postfix(postfix)
 
-    return average_metrics(totals, total_samples, total_correct)
+    return average_metrics(totals, total_samples, total_correct, all_predictions, all_labels)
 
 
 @torch.no_grad()
@@ -266,6 +306,8 @@ def evaluate(
     totals: dict[str, float] = {}
     total_correct = 0
     total_samples = 0
+    all_predictions: list[torch.Tensor] = []
+    all_labels: list[torch.Tensor] = []
 
     iterator = loader
     if show_progress:
@@ -286,8 +328,11 @@ def evaluate(
 
         batch_size = labels.size(0)
         update_metric_totals(totals, losses, batch_size)
-        total_correct += compute_accuracy(logits, labels)
+        predictions = logits.argmax(dim=1)
+        total_correct += int((predictions == labels).sum().item())
         total_samples += batch_size
+        all_predictions.append(predictions.cpu())
+        all_labels.append(labels.detach().cpu())
 
         if show_progress:
             postfix = {"loss": totals["loss"] / max(1, total_samples)}
@@ -300,7 +345,7 @@ def evaluate(
             postfix["acc"] = total_correct / max(1, total_samples)
             iterator.set_postfix(postfix)
 
-    return average_metrics(totals, total_samples, total_correct)
+    return average_metrics(totals, total_samples, total_correct, all_predictions, all_labels)
 
 
 def create_dataloaders(args: argparse.Namespace) -> tuple[DataLoader, DataLoader, DataLoader, dict[str, int]]:
@@ -371,6 +416,10 @@ def format_metrics(prefix: str, metrics: dict[str, float]) -> str:
         parts.append(f"{prefix}_audio_loss={metrics['audio_loss']:.4f}")
     if "visual_loss" in metrics:
         parts.append(f"{prefix}_visual_loss={metrics['visual_loss']:.4f}")
+    if "audio_acc" in metrics:
+        parts.append(f"{prefix}_audio_acc={metrics['audio_acc']:.4f}")
+    if "visual_acc" in metrics:
+        parts.append(f"{prefix}_visual_acc={metrics['visual_acc']:.4f}")
     if "fgm_coef_audio" in metrics:
         parts.append(f"{prefix}_fgm_coef_audio={metrics['fgm_coef_audio']:.4f}")
     if "fgm_coef_visual" in metrics:
@@ -380,7 +429,47 @@ def format_metrics(prefix: str, metrics: dict[str, float]) -> str:
     if "fgm_signal_visual" in metrics:
         parts.append(f"{prefix}_fgm_signal_visual={metrics['fgm_signal_visual']:.4f}")
     parts.append(f"{prefix}_acc={metrics['acc']:.4f}")
+    if "macro_f1" in metrics:
+        parts.append(f"{prefix}_macro_f1={metrics['macro_f1']:.4f}")
     return " ".join(parts)
+
+
+def format_epoch_report(epoch: int, train_metrics: dict[str, float], val_metrics: dict[str, float]) -> str:
+    def metric(metrics: dict[str, float], name: str) -> str:
+        return f"{metrics[name]:.4f}" if name in metrics else "-"
+
+    lines = [
+        f"Epoch {epoch:03d}",
+        "  train | "
+        f"loss {metric(train_metrics, 'loss')} | "
+        f"fusion {metric(train_metrics, 'fusion_loss')} | "
+        f"audio {metric(train_metrics, 'audio_loss')} | "
+        f"visual {metric(train_metrics, 'visual_loss')} | "
+        f"acc {metric(train_metrics, 'acc')} | "
+        f"macroF1 {metric(train_metrics, 'macro_f1')} | "
+        f"a_acc {metric(train_metrics, 'audio_acc')} | "
+        f"v_acc {metric(train_metrics, 'visual_acc')}",
+    ]
+    if "fgm_coef_audio" in train_metrics:
+        lines.append(
+            "  fgm   | "
+            f"coef_a {metric(train_metrics, 'fgm_coef_audio')} | "
+            f"coef_v {metric(train_metrics, 'fgm_coef_visual')} | "
+            f"sig_a {metric(train_metrics, 'fgm_signal_audio')} | "
+            f"sig_v {metric(train_metrics, 'fgm_signal_visual')}"
+        )
+    lines.append(
+        "  val   | "
+        f"loss {metric(val_metrics, 'loss')} | "
+        f"fusion {metric(val_metrics, 'fusion_loss')} | "
+        f"audio {metric(val_metrics, 'audio_loss')} | "
+        f"visual {metric(val_metrics, 'visual_loss')} | "
+        f"acc {metric(val_metrics, 'acc')} | "
+        f"macroF1 {metric(val_metrics, 'macro_f1')} | "
+        f"a_acc {metric(val_metrics, 'audio_acc')} | "
+        f"v_acc {metric(val_metrics, 'visual_acc')}"
+    )
+    return "\n".join(lines)
 
 
 def args_to_dict(args: argparse.Namespace) -> dict[str, Any]:
@@ -456,6 +545,59 @@ def plot_history(history: list[dict[str, Any]], path: Path) -> None:
     fig.savefig(path, dpi=160)
     plt.close(fig)
 
+    loss_path = path.with_name("loss_curves.png")
+    acc_path = path.with_name("modality_accuracy.png")
+    train_fusion_loss = [item["train"].get("fusion_loss") for item in history]
+    train_audio_loss = [item["train"].get("audio_loss") for item in history]
+    train_visual_loss = [item["train"].get("visual_loss") for item in history]
+    val_fusion_loss = [item["val"].get("fusion_loss") for item in history]
+    val_audio_loss = [item["val"].get("audio_loss") for item in history]
+    val_visual_loss = [item["val"].get("visual_loss") for item in history]
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.plot(epochs, train_loss, label="train total")
+    ax.plot(epochs, val_loss, label="val total")
+    if all(value is not None for value in train_fusion_loss):
+        ax.plot(epochs, train_fusion_loss, label="train fusion")
+        ax.plot(epochs, val_fusion_loss, label="val fusion")
+    if all(value is not None for value in train_audio_loss):
+        ax.plot(epochs, train_audio_loss, label="train audio")
+        ax.plot(epochs, val_audio_loss, label="val audio")
+    if all(value is not None for value in train_visual_loss):
+        ax.plot(epochs, train_visual_loss, label="train visual")
+        ax.plot(epochs, val_visual_loss, label="val visual")
+    ax.set_title("Loss Curves")
+    ax.set_xlabel("Epoch")
+    ax.set_ylabel("Loss")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(loss_path, dpi=160)
+    plt.close(fig)
+
+    train_audio_acc = [item["train"].get("audio_acc") for item in history]
+    train_visual_acc = [item["train"].get("visual_acc") for item in history]
+    val_audio_acc = [item["val"].get("audio_acc") for item in history]
+    val_visual_acc = [item["val"].get("visual_acc") for item in history]
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.plot(epochs, train_acc, label="train fusion")
+    ax.plot(epochs, val_acc, label="val fusion")
+    if all(value is not None for value in train_audio_acc):
+        ax.plot(epochs, train_audio_acc, label="train audio")
+        ax.plot(epochs, val_audio_acc, label="val audio")
+    if all(value is not None for value in train_visual_acc):
+        ax.plot(epochs, train_visual_acc, label="train visual")
+        ax.plot(epochs, val_visual_acc, label="val visual")
+    ax.set_title("Modality Accuracy")
+    ax.set_xlabel("Epoch")
+    ax.set_ylabel("Accuracy")
+    ax.set_ylim(0.0, 1.0)
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(acc_path, dpi=160)
+    plt.close(fig)
+
 
 def run_training(args: argparse.Namespace) -> dict[str, float]:
     set_seed(args.seed, deterministic=args.deterministic)
@@ -512,11 +654,7 @@ def run_training(args: argparse.Namespace) -> dict[str, float]:
         )
         scheduler.step()
 
-        print(
-            f"epoch={epoch:03d} "
-            f"{format_metrics('train', train_metrics)} "
-            f"{format_metrics('val', val_metrics)}"
-        )
+        print(format_epoch_report(epoch, train_metrics, val_metrics))
 
         epoch_record = {
             "epoch": epoch,
@@ -529,22 +667,13 @@ def run_training(args: argparse.Namespace) -> dict[str, float]:
         write_history_json(history_json_path, history, args, sizes)
         plot_history(history, curve_path)
 
-        save_checkpoint(
-            output_dir / "last.pt",
-            model,
-            optimizer,
-            epoch,
-            {"train": train_metrics, "val": val_metrics},
-            args,
-        )
-
         if val_metrics["acc"] > best_val_acc:
             best_val_acc = val_metrics["acc"]
             best_epoch = epoch
             best_metrics = {"train": train_metrics, "val": val_metrics}
             save_checkpoint(output_dir / "best.pt", model, optimizer, epoch, best_metrics, args)
 
-    best_state = torch.load(output_dir / "best.pt", map_location=device)
+    best_state = torch.load(output_dir / "best.pt", map_location=device, weights_only=False)
     model.load_state_dict(best_state["model"])
     test_metrics = evaluate(
         model,
@@ -557,8 +686,7 @@ def run_training(args: argparse.Namespace) -> dict[str, float]:
     result = {
         "best_epoch": float(best_epoch),
         "best_val_acc": float(best_val_acc),
-        "test_loss": float(test_metrics["loss"]),
-        "test_acc": float(test_metrics["acc"]),
+        **{f"test_{name}": float(value) for name, value in test_metrics.items()},
     }
     (output_dir / "metrics.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
     print(

@@ -19,6 +19,7 @@ from AV_v2.train_cremad import (
     build_model,
     evaluate,
     format_metrics,
+    format_epoch_report,
     plot_history,
     save_checkpoint,
     seed_worker,
@@ -129,11 +130,7 @@ def run_training(args: argparse.Namespace) -> dict[str, float]:
         )
         scheduler.step()
 
-        print(
-            f"epoch={epoch:03d} "
-            f"{format_metrics('train', train_metrics)} "
-            f"{format_metrics('val', val_metrics)}"
-        )
+        print(format_epoch_report(epoch, train_metrics, val_metrics))
 
         epoch_record = {
             "epoch": epoch,
@@ -146,22 +143,13 @@ def run_training(args: argparse.Namespace) -> dict[str, float]:
         write_history_json(history_json_path, history, args, sizes)
         plot_history(history, curve_path)
 
-        save_checkpoint(
-            output_dir / "last.pt",
-            model,
-            optimizer,
-            epoch,
-            {"train": train_metrics, "val": val_metrics},
-            args,
-        )
-
         if val_metrics["acc"] > best_val_acc:
             best_val_acc = val_metrics["acc"]
             best_epoch = epoch
             best_metrics = {"train": train_metrics, "val": val_metrics}
             save_checkpoint(output_dir / "best.pt", model, optimizer, epoch, best_metrics, args)
 
-    best_state = torch.load(output_dir / "best.pt", map_location=device)
+    best_state = torch.load(output_dir / "best.pt", map_location=device, weights_only=False)
     model.load_state_dict(best_state["model"])
     test_metrics = evaluate(
         model,
@@ -174,8 +162,7 @@ def run_training(args: argparse.Namespace) -> dict[str, float]:
     result = {
         "best_epoch": float(best_epoch),
         "best_val_acc": float(best_val_acc),
-        "test_loss": float(test_metrics["loss"]),
-        "test_acc": float(test_metrics["acc"]),
+        **{f"test_{name}": float(value) for name, value in test_metrics.items()},
     }
     (output_dir / "metrics.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
     print(
