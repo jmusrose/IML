@@ -91,6 +91,8 @@ class MOSIRegressionModel(nn.Module):
         if inferred_text_dim is None and hasattr(self.text_encoder, "config"):
             inferred_text_dim = getattr(self.text_encoder.config, "hidden_size", None)
         text_dim = int(text_dim or inferred_text_dim or 768)
+        self.text_dim = text_dim
+        self.hidden_sz = hidden_sz
 
         self.vision_encoder = SequenceEncoder(
             vision_dim,
@@ -171,9 +173,12 @@ class MOSIRegressionModel(nn.Module):
         fused = torch.cat([text_feature, vision_feature, audio_feature], dim=1)
         return {
             "prediction": self.fusion(fused).squeeze(-1),
-            "text_prediction": self.text_probe(text_feature).squeeze(-1),
-            "vision_prediction": self.vision_probe(vision_feature).squeeze(-1),
-            "audio_prediction": self.audio_probe(audio_feature).squeeze(-1),
+            "text_prediction": self.text_probe(text_feature.detach()).squeeze(-1),
+            "vision_prediction": self.vision_probe(vision_feature.detach()).squeeze(-1),
+            "audio_prediction": self.audio_probe(audio_feature.detach()).squeeze(-1),
+            "text_feature": text_feature,
+            "vision_feature": vision_feature,
+            "audio_feature": audio_feature,
         }
 
     def forward(

@@ -30,17 +30,21 @@ def build_dataset_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--device", type=str, default="cuda")
-    parser.add_argument("--pin-memory", action="store_true")
+    parser.add_argument("--pin-memory", dest="pin_memory", action="store_true")
+    parser.add_argument("--no-pin-memory", dest="pin_memory", action="store_false")
+    parser.set_defaults(pin_memory=True)
     parser.add_argument("--deterministic", action="store_true")
     parser.add_argument("--no-progress", action="store_true")
-    parser.add_argument("--fgm", action="store_true", help="Enable CMI-FGM gradient modulation for AV training.")
+    parser.add_argument("--fgm", dest="fgm", action="store_true", help="Enable CMI-FGM gradient modulation for AV training.")
+    parser.add_argument("--no-fgm", dest="fgm", action="store_false", help="Disable CMI-FGM gradient modulation.")
+    parser.set_defaults(fgm=True)
     parser.add_argument("--fgm-lambda", type=float, default=0.5)
     parser.add_argument("--fgm-tau", type=float, default=1.0)
     parser.add_argument("--fgm-momentum", type=float, default=0.9)
     parser.add_argument("--fgm-warmup-steps", type=int, default=0)
 
     parser.add_argument("--split-csv-root", type=str, default="ICCV2025-GDL-main/dataset/data/CREMAD")
-    parser.add_argument("--use-video-frames", type=int, default=3)
+    parser.add_argument("--use-video-frames", type=int, default=None)
     parser.add_argument("--class-file", type=str, default="ICCV2025-GDL-main/dataset/data/KineticSound/class.txt")
 
     args = parser.parse_args(argv)
@@ -53,6 +57,7 @@ def build_dataset_args(argv: list[str] | None = None) -> argparse.Namespace:
         args.n_fft = 512 if args.n_fft is None else args.n_fft
         args.hop_length = 160 if args.hop_length is None else args.hop_length
         args.win_length = 400 if args.win_length is None else args.win_length
+        args.use_video_frames = 1 if args.use_video_frames is None else args.use_video_frames
         args.fps = args.use_video_frames
     elif args.dataset == "ks":
         args.data_root = args.data_root or "dataset/kinect_sound"
@@ -62,10 +67,12 @@ def build_dataset_args(argv: list[str] | None = None) -> argparse.Namespace:
         args.n_fft = 256 if args.n_fft is None else args.n_fft
         args.hop_length = 128 if args.hop_length is None else args.hop_length
         args.win_length = 256 if args.win_length is None else args.win_length
+        args.use_video_frames = 3 if args.use_video_frames is None else args.use_video_frames
     else:  # ave
         args.data_root = args.data_root or "dataset/AVE"
         args.output_dir = args.output_dir or "runs/video_ave"
         args.num_classes = 28
+        args.use_video_frames = 10 if args.use_video_frames is None else args.use_video_frames
 
     return args
 

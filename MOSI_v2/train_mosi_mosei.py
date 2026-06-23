@@ -8,8 +8,8 @@ from pathlib import Path
 if __package__ is None or __package__ == "":
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from MOSI_v1.train_mosi import build_arg_parser
-from MOSI_v1.train_mosi import run_training
+from MOSI_v2.train_mosi import build_arg_parser
+from MOSI_v2.train_mosi import run_training
 
 
 DATASET_DEFAULTS = {

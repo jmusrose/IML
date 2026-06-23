@@ -499,7 +499,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-classes", type=int, default=6)
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--batch-size", type=int, default=16)
-    parser.add_argument("--lr", type=float, default=0.02)
+    parser.add_argument("--lr", type=float, default=1e-5)
     parser.add_argument("--momentum", type=float, default=0.9)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
     parser.add_argument("--fps", type=int, default=1)

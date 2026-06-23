@@ -6,8 +6,8 @@ from pathlib import Path
 if __package__ is None or __package__ == "":
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from MOSI_v1.train_mosi import parse_args as _parse_args
-from MOSI_v1.train_mosi import run_training
+from MOSI_v2.train_mosi import parse_args as _parse_args
+from MOSI_v2.train_mosi import run_training
 
 
 def parse_args(argv: list[str] | None = None):

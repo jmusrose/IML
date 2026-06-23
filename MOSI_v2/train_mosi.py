@@ -14,11 +14,20 @@ if __package__ is None or __package__ == "":
 import numpy as np
 import torch
 import torch.nn as nn
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
-from MOSI_v1.datasets import MOSIDataset, load_mosi_splits, mosi_collate_fn
-from MOSI_v1.models import MOSIRegressionModel
+from cmi_fgm import (
+    CMIFGMState,
+    register_feature_gradient_hooks,
+    register_split_linear_weight_hook,
+)
+from MOSI_v2.datasets import MOSIDataset, load_mosi_splits, mosi_collate_fn
+from MOSI_v2.models import MOSIRegressionModel
 
 
 def set_seed(seed: int, deterministic: bool = False) -> None:
@@ -44,6 +53,18 @@ def batch_to_device(batch: dict[str, Any], device: torch.device) -> dict[str, An
         key: value.to(device, non_blocking=True) if key in tensor_keys else value
         for key, value in batch.items()
     }
+
+
+def build_fgm_state(args: argparse.Namespace) -> CMIFGMState | None:
+    if not getattr(args, "fgm", False):
+        return None
+    return CMIFGMState(
+        modalities=("text", "vision", "audio"),
+        strength=args.fgm_lambda,
+        temperature=args.fgm_tau,
+        momentum=args.fgm_momentum,
+        warmup_steps=args.fgm_warmup_steps,
+    )
 
 
 def regression_metrics(predictions: torch.Tensor, labels: torch.Tensor, loss: float) -> dict[str, float]:
@@ -98,7 +119,9 @@ def forward_and_losses(
     model: nn.Module,
     batch: dict[str, Any],
     criterion: nn.Module,
-) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    fgm_state: CMIFGMState | None = None,
+) -> tuple[torch.Tensor, dict[str, torch.Tensor], list[torch.utils.hooks.RemovableHandle]]:
+    handles: list[torch.utils.hooks.RemovableHandle] = []
     if hasattr(model, "forward_with_modal_predictions"):
         outputs = model.forward_with_modal_predictions(
             batch["input_ids"],
@@ -109,21 +132,69 @@ def forward_and_losses(
             batch["audio_mask"],
         )
         predictions = outputs["prediction"]
-        fusion_loss = criterion(predictions, batch["labels"])
-        text_loss = criterion(outputs["text_prediction"], batch["labels"])
-        vision_loss = criterion(outputs["vision_prediction"], batch["labels"])
-        audio_loss = criterion(outputs["audio_prediction"], batch["labels"])
-        return predictions, {
+        fusion_per_sample = criterion(predictions, batch["labels"])
+        text_per_sample = criterion(outputs["text_prediction"], batch["labels"])
+        vision_per_sample = criterion(outputs["vision_prediction"], batch["labels"])
+        audio_per_sample = criterion(outputs["audio_prediction"], batch["labels"])
+        fusion_loss = fusion_per_sample.mean()
+        text_loss = text_per_sample.mean()
+        vision_loss = vision_per_sample.mean()
+        audio_loss = audio_per_sample.mean()
+        losses = {
             "loss": fusion_loss + text_loss + vision_loss + audio_loss,
             "fusion_loss": fusion_loss,
             "text_loss": text_loss,
             "vision_loss": vision_loss,
             "audio_loss": audio_loss,
         }
+        if fgm_state is not None:
+            batch_size = batch["labels"].shape[0]
+            coefficients = fgm_state.coefficients(batch_size, predictions.device, predictions.dtype)
+            handles.extend(
+                register_feature_gradient_hooks(
+                    {
+                        "text": outputs["text_feature"],
+                        "vision": outputs["vision_feature"],
+                        "audio": outputs["audio_feature"],
+                    },
+                    coefficients,
+                )
+            )
+            first_fusion_linear = model.fusion[1] if hasattr(model, "fusion") and len(model.fusion) > 1 else None
+            if isinstance(first_fusion_linear, nn.Linear):
+                handles.append(
+                    register_split_linear_weight_hook(
+                        first_fusion_linear,
+                        split_sizes=(model.text_dim, model.hidden_sz, model.hidden_sz),
+                        modalities=("text", "vision", "audio"),
+                        coefficients=coefficients,
+                    )
+                )
+            signal = torch.stack(
+                [
+                    0.5 * (vision_per_sample.detach() + audio_per_sample.detach()) - fusion_per_sample.detach(),
+                    0.5 * (text_per_sample.detach() + audio_per_sample.detach()) - fusion_per_sample.detach(),
+                    0.5 * (text_per_sample.detach() + vision_per_sample.detach()) - fusion_per_sample.detach(),
+                ],
+                dim=1,
+            )
+            fgm_state.update(signal)
+            signal_means = fgm_state.mean_signal()
+            losses.update(
+                {
+                    "fgm_coef_text": coefficients["text"].mean(),
+                    "fgm_coef_vision": coefficients["vision"].mean(),
+                    "fgm_coef_audio": coefficients["audio"].mean(),
+                    "fgm_signal_text": signal_means["text"].to(predictions.device),
+                    "fgm_signal_vision": signal_means["vision"].to(predictions.device),
+                    "fgm_signal_audio": signal_means["audio"].to(predictions.device),
+                }
+            )
+        return predictions, losses, handles
 
     predictions = forward_batch(model, batch)
-    loss = criterion(predictions, batch["labels"])
-    return predictions, {"loss": loss}
+    loss = criterion(predictions, batch["labels"]).mean()
+    return predictions, {"loss": loss}, handles
 
 
 def train_one_epoch(
@@ -133,9 +204,10 @@ def train_one_epoch(
     device: torch.device,
     epoch: int | None = None,
     show_progress: bool = False,
+    fgm_state: CMIFGMState | None = None,
 ) -> dict[str, float]:
     model.train()
-    criterion = nn.MSELoss()
+    criterion = nn.MSELoss(reduction="none")
     loss_totals: dict[str, float] = {}
     total_samples = 0
     all_preds: list[torch.Tensor] = []
@@ -149,9 +221,11 @@ def train_one_epoch(
     for raw_batch in iterator:
         batch = batch_to_device(raw_batch, device)
         optimizer.zero_grad(set_to_none=True)
-        predictions, losses = forward_and_losses(model, batch, criterion)
+        predictions, losses, handles = forward_and_losses(model, batch, criterion, fgm_state=fgm_state)
         loss = losses["loss"]
         loss.backward()
+        for handle in handles:
+            handle.remove()
         optimizer.step()
 
         batch_size = batch["labels"].shape[0]
@@ -182,7 +256,7 @@ def evaluate(
     show_progress: bool = False,
 ) -> dict[str, float]:
     model.eval()
-    criterion = nn.MSELoss()
+    criterion = nn.MSELoss(reduction="none")
     loss_totals: dict[str, float] = {}
     total_samples = 0
     all_preds: list[torch.Tensor] = []
@@ -195,7 +269,9 @@ def evaluate(
 
     for raw_batch in iterator:
         batch = batch_to_device(raw_batch, device)
-        predictions, losses = forward_and_losses(model, batch, criterion)
+        predictions, losses, handles = forward_and_losses(model, batch, criterion)
+        for handle in handles:
+            handle.remove()
 
         batch_size = batch["labels"].shape[0]
         for name, value in losses.items():
@@ -266,14 +342,72 @@ def save_checkpoint(
 
 
 def format_metrics(prefix: str, metrics: dict[str, float]) -> str:
-    return (
-        f"{prefix}_loss={metrics['loss']:.4f} "
-        f"{prefix}_mae={metrics['mae']:.4f} "
-        f"{prefix}_corr={metrics['corr']:.4f} "
-        f"{prefix}_acc7={metrics['acc7']:.4f} "
-        f"{prefix}_acc2={metrics['binary_acc']:.4f} "
-        f"{prefix}_f1={metrics['f1']:.4f}"
+    parts = [
+        f"{prefix}_loss={metrics['loss']:.4f}",
+        f"{prefix}_mae={metrics['mae']:.4f}",
+        f"{prefix}_corr={metrics['corr']:.4f}",
+        f"{prefix}_acc7={metrics['acc7']:.4f}",
+        f"{prefix}_acc2={metrics['binary_acc']:.4f}",
+        f"{prefix}_f1={metrics['f1']:.4f}",
+    ]
+    for name in ("fusion_loss", "text_loss", "vision_loss", "audio_loss"):
+        if name in metrics:
+            parts.append(f"{prefix}_{name}={metrics[name]:.4f}")
+    for name in (
+        "fgm_coef_text",
+        "fgm_coef_vision",
+        "fgm_coef_audio",
+        "fgm_signal_text",
+        "fgm_signal_vision",
+        "fgm_signal_audio",
+    ):
+        if name in metrics:
+            parts.append(f"{prefix}_{name}={metrics[name]:.4f}")
+    return " ".join(parts)
+
+
+def format_epoch_report(epoch: int, train_metrics: dict[str, float], val_metrics: dict[str, float]) -> str:
+    def metric(metrics: dict[str, float], name: str) -> str:
+        return f"{metrics[name]:.4f}" if name in metrics else "-"
+
+    lines = [
+        f"Epoch {epoch:03d}",
+        "  train | "
+        f"loss {metric(train_metrics, 'loss')} | "
+        f"fusion {metric(train_metrics, 'fusion_loss')} | "
+        f"text {metric(train_metrics, 'text_loss')} | "
+        f"vision {metric(train_metrics, 'vision_loss')} | "
+        f"audio {metric(train_metrics, 'audio_loss')} | "
+        f"mae {metric(train_metrics, 'mae')} | "
+        f"corr {metric(train_metrics, 'corr')} | "
+        f"acc7 {metric(train_metrics, 'acc7')} | "
+        f"acc2 {metric(train_metrics, 'binary_acc')} | "
+        f"f1 {metric(train_metrics, 'f1')}",
+    ]
+    if "fgm_coef_text" in train_metrics:
+        lines.append(
+            "  fgm   | "
+            f"coef_t {metric(train_metrics, 'fgm_coef_text')} | "
+            f"coef_v {metric(train_metrics, 'fgm_coef_vision')} | "
+            f"coef_a {metric(train_metrics, 'fgm_coef_audio')} | "
+            f"sig_t {metric(train_metrics, 'fgm_signal_text')} | "
+            f"sig_v {metric(train_metrics, 'fgm_signal_vision')} | "
+            f"sig_a {metric(train_metrics, 'fgm_signal_audio')}"
+        )
+    lines.append(
+        "  val   | "
+        f"loss {metric(val_metrics, 'loss')} | "
+        f"fusion {metric(val_metrics, 'fusion_loss')} | "
+        f"text {metric(val_metrics, 'text_loss')} | "
+        f"vision {metric(val_metrics, 'vision_loss')} | "
+        f"audio {metric(val_metrics, 'audio_loss')} | "
+        f"mae {metric(val_metrics, 'mae')} | "
+        f"corr {metric(val_metrics, 'corr')} | "
+        f"acc7 {metric(val_metrics, 'acc7')} | "
+        f"acc2 {metric(val_metrics, 'binary_acc')} | "
+        f"f1 {metric(val_metrics, 'f1')}"
     )
+    return "\n".join(lines)
 
 
 def append_epoch_log(path: Path, record: dict[str, Any], args: argparse.Namespace, split_sizes: dict[str, int]) -> None:
@@ -281,6 +415,108 @@ def append_epoch_log(path: Path, record: dict[str, Any], args: argparse.Namespac
     payload = {**record, "args": vars(args), "split_sizes": split_sizes}
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+
+
+def write_history_json(
+    path: Path,
+    history: list[dict[str, Any]],
+    args: argparse.Namespace,
+    split_sizes: dict[str, int],
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "args": vars(args),
+        "split_sizes": split_sizes,
+        "epochs": history,
+    }
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def plot_history(history: list[dict[str, Any]], path: Path) -> None:
+    if not history:
+        return
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    epochs = [item["epoch"] for item in history]
+    train_loss = [item["train"]["loss"] for item in history]
+    val_loss = [item["val"]["loss"] for item in history]
+    train_mae = [item["train"]["mae"] for item in history]
+    val_mae = [item["val"]["mae"] for item in history]
+    train_corr = [item["train"]["corr"] for item in history]
+    val_corr = [item["val"]["corr"] for item in history]
+
+    fig, axes = plt.subplots(2, 3, figsize=(14, 7), sharex=True)
+    axes[0, 0].plot(epochs, train_loss, label="train")
+    axes[0, 0].set_title("Train Loss")
+    axes[0, 0].set_ylabel("Loss")
+    axes[0, 0].legend()
+    axes[0, 0].grid(True, alpha=0.3)
+
+    axes[0, 1].plot(epochs, train_mae, label="train")
+    axes[0, 1].set_title("Train MAE")
+    axes[0, 1].set_ylabel("MAE")
+    axes[0, 1].legend()
+    axes[0, 1].grid(True, alpha=0.3)
+
+    axes[0, 2].plot(epochs, train_corr, label="train")
+    axes[0, 2].set_title("Train Correlation")
+    axes[0, 2].set_ylabel("Pearson r")
+    axes[0, 2].legend()
+    axes[0, 2].grid(True, alpha=0.3)
+
+    axes[1, 0].plot(epochs, val_loss, label="val")
+    axes[1, 0].set_title("Val Loss")
+    axes[1, 0].set_xlabel("Epoch")
+    axes[1, 0].set_ylabel("Loss")
+    axes[1, 0].legend()
+    axes[1, 0].grid(True, alpha=0.3)
+
+    axes[1, 1].plot(epochs, val_mae, label="val")
+    axes[1, 1].set_title("Val MAE")
+    axes[1, 1].set_xlabel("Epoch")
+    axes[1, 1].set_ylabel("MAE")
+    axes[1, 1].legend()
+    axes[1, 1].grid(True, alpha=0.3)
+
+    axes[1, 2].plot(epochs, val_corr, label="val")
+    axes[1, 2].set_title("Val Correlation")
+    axes[1, 2].set_xlabel("Epoch")
+    axes[1, 2].set_ylabel("Pearson r")
+    axes[1, 2].legend()
+    axes[1, 2].grid(True, alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(path, dpi=160)
+    plt.close(fig)
+
+    def plot_loss_split(split_name: str, output_path: Path) -> None:
+        split_metrics = [item[split_name] for item in history]
+        total_loss = [metrics["loss"] for metrics in split_metrics]
+        fusion_loss = [metrics.get("fusion_loss") for metrics in split_metrics]
+        text_loss = [metrics.get("text_loss") for metrics in split_metrics]
+        vision_loss = [metrics.get("vision_loss") for metrics in split_metrics]
+        audio_loss = [metrics.get("audio_loss") for metrics in split_metrics]
+
+        fig, ax = plt.subplots(figsize=(8, 5))
+        ax.plot(epochs, total_loss, label="total")
+        if all(value is not None for value in fusion_loss):
+            ax.plot(epochs, fusion_loss, label="fusion")
+        if all(value is not None for value in text_loss):
+            ax.plot(epochs, text_loss, label="text")
+        if all(value is not None for value in vision_loss):
+            ax.plot(epochs, vision_loss, label="vision")
+        if all(value is not None for value in audio_loss):
+            ax.plot(epochs, audio_loss, label="audio")
+        ax.set_title(f"{split_name.title()} Loss Curves")
+        ax.set_xlabel("Epoch")
+        ax.set_ylabel("Loss")
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        fig.tight_layout()
+        fig.savefig(output_path, dpi=160)
+        plt.close(fig)
+
+    plot_loss_split("train", path.with_name("train_loss_curves.png"))
+    plot_loss_split("val", path.with_name("val_loss_curves.png"))
 
 
 def run_training(args: argparse.Namespace) -> dict[str, float]:
@@ -301,12 +537,15 @@ def run_training(args: argparse.Namespace) -> dict[str, float]:
         dropout=args.dropout,
     ).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    fgm_state = build_fgm_state(args)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "config.json").write_text(json.dumps(vars(args), indent=2), encoding="utf-8")
     history_path = output_dir / "history.jsonl"
+    history_json_path = output_dir / "history.json"
+    curve_path = output_dir / "curves.png"
     history: list[dict[str, Any]] = []
     best_val_mae = float("inf")
     best_epoch = 0
@@ -320,6 +559,7 @@ def run_training(args: argparse.Namespace) -> dict[str, float]:
             device,
             epoch=epoch,
             show_progress=not args.no_progress,
+            fgm_state=fgm_state,
         )
         val_metrics = evaluate(
             model,
@@ -331,7 +571,7 @@ def run_training(args: argparse.Namespace) -> dict[str, float]:
         )
         scheduler.step()
 
-        print(f"epoch={epoch:03d} {format_metrics('train', train_metrics)} {format_metrics('val', val_metrics)}")
+        print(format_epoch_report(epoch, train_metrics, val_metrics))
         record = {
             "epoch": epoch,
             "lr": float(optimizer.param_groups[0]["lr"]),
@@ -340,21 +580,22 @@ def run_training(args: argparse.Namespace) -> dict[str, float]:
         }
         history.append(record)
         append_epoch_log(history_path, record, args, sizes)
-        (output_dir / "history.json").write_text(
-            json.dumps({"args": vars(args), "split_sizes": sizes, "epochs": history}, indent=2),
-            encoding="utf-8",
-        )
-        save_checkpoint(output_dir / "last.pt", model, optimizer, epoch, {"train": train_metrics, "val": val_metrics}, args)
+        write_history_json(history_json_path, history, args, sizes)
+        plot_history(history, curve_path)
 
         if val_metrics["mae"] < best_val_mae:
             best_val_mae = val_metrics["mae"]
             best_epoch = epoch
             save_checkpoint(output_dir / "best.pt", model, optimizer, epoch, {"train": train_metrics, "val": val_metrics}, args)
 
-    best_state = torch.load(output_dir / "best.pt", map_location=device)
+    best_state = torch.load(output_dir / "best.pt", map_location=device, weights_only=False)
     model.load_state_dict(best_state["model"])
     test_metrics = evaluate(model, test_loader, device, split_name="test", show_progress=not args.no_progress)
-    result = {"best_epoch": float(best_epoch), "best_val_mae": float(best_val_mae), **test_metrics}
+    result = {
+        "best_epoch": float(best_epoch),
+        "best_val_mae": float(best_val_mae),
+        **{f"test_{name}": float(value) for name, value in test_metrics.items()},
+    }
     (output_dir / "metrics.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
     print(f"best_epoch={best_epoch:03d} best_val_mae={best_val_mae:.4f} {format_metrics('test', test_metrics)}")
     return result
@@ -385,9 +626,18 @@ def build_arg_parser(
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--device", type=str, default="cuda")
-    parser.add_argument("--pin-memory", action="store_true")
+    parser.add_argument("--pin-memory", dest="pin_memory", action="store_true")
+    parser.add_argument("--no-pin-memory", dest="pin_memory", action="store_false")
+    parser.set_defaults(pin_memory=True)
     parser.add_argument("--deterministic", action="store_true")
     parser.add_argument("--no-progress", action="store_true")
+    parser.add_argument("--fgm", dest="fgm", action="store_true", help="Enable CMI-FGM gradient modulation.")
+    parser.add_argument("--no-fgm", dest="fgm", action="store_false", help="Disable CMI-FGM gradient modulation.")
+    parser.set_defaults(fgm=True)
+    parser.add_argument("--fgm-lambda", type=float, default=0.5)
+    parser.add_argument("--fgm-tau", type=float, default=1.0)
+    parser.add_argument("--fgm-momentum", type=float, default=0.9)
+    parser.add_argument("--fgm-warmup-steps", type=int, default=0)
     return parser
 
 

@@ -181,12 +181,17 @@ class VisualBaseline(nn.Module):
 
 
 class AVBaseline(nn.Module):
-    def __init__(self, num_classes: int = DATASET_NUM_CLASSES["CREMAD"]) -> None:
+    def __init__(
+        self,
+        num_classes: int = DATASET_NUM_CLASSES["CREMAD"],
+        fusion_dropout: float = 0.0,
+    ) -> None:
         super().__init__()
         self.audio_net = ResNet18(in_channels=1)
         self.visual_net = ResNet18(in_channels=3)
         self.audio_probe = nn.Linear(512, num_classes)
         self.visual_probe = nn.Linear(512, num_classes)
+        self.fusion_dropout = nn.Dropout(p=fusion_dropout) if fusion_dropout > 0 else nn.Identity()
         self.classifier = nn.Linear(1024, num_classes)
 
     def extract_audio_feature(self, audio: torch.Tensor) -> torch.Tensor:
@@ -205,6 +210,7 @@ class AVBaseline(nn.Module):
         audio_feature = self.extract_audio_feature(audio)
         visual_feature = self.extract_visual_feature(visual)
         fusion_feature = torch.cat([audio_feature, visual_feature], dim=1)
+        fusion_feature = self.fusion_dropout(fusion_feature)
         return self.classifier(fusion_feature)
 
     def forward_with_modal_logits(
@@ -215,6 +221,7 @@ class AVBaseline(nn.Module):
         audio_feature = self.extract_audio_feature(audio)
         visual_feature = self.extract_visual_feature(visual)
         fusion_feature = torch.cat([audio_feature, visual_feature], dim=1)
+        fusion_feature = self.fusion_dropout(fusion_feature)
         audio_logits = self.audio_probe(audio_feature.detach())
         visual_logits = self.visual_probe(visual_feature.detach())
         logits = self.classifier(fusion_feature)

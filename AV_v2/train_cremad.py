@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import random
 import sys
@@ -27,11 +28,31 @@ from cmi_fgm import (
 )
 from AV_v2.datasets import (
     CREMADAVDataset,
+    CREMADTrainImageTransform,
     ResizeToTensorNormalize,
     discover_cremad_samples,
     split_samples_from_csv,
 )
 from AV_v2.models import AVBaseline, AudioBaseline, VisualBaseline
+
+
+VISUAL_AUGMENTATION_PRESETS = {
+    "light": {
+        "scale": (0.85, 1.0),
+        "ratio": (0.95, 1.05),
+        "horizontal_flip_prob": 0.0,
+    },
+    "medium": {
+        "scale": (0.7, 1.0),
+        "ratio": (0.9, 1.1),
+        "horizontal_flip_prob": 0.0,
+    },
+    "strong": {
+        "scale": (0.5, 1.0),
+        "ratio": (0.8, 1.25),
+        "horizontal_flip_prob": 0.2,
+    },
+}
 
 
 def set_seed(seed: int, deterministic: bool = False) -> None:
@@ -51,9 +72,13 @@ def seed_worker(worker_id: int) -> None:
     random.seed(worker_seed)
 
 
-def build_model(modality: str, num_classes: int = 6) -> nn.Module:
+def build_model(
+    modality: str,
+    num_classes: int = 6,
+    fusion_dropout: float = 0.0,
+) -> nn.Module:
     if modality == "av":
-        return AVBaseline(num_classes=num_classes)
+        return AVBaseline(num_classes=num_classes, fusion_dropout=fusion_dropout)
     if modality == "audio":
         return AudioBaseline(num_classes=num_classes)
     if modality == "visual":
@@ -65,13 +90,89 @@ def build_fgm_state(args: argparse.Namespace) -> CMIFGMState | None:
     if not getattr(args, "fgm", False):
         return None
     if args.modality != "av":
-        raise ValueError("CMI-FGM is only available for --modality av.")
+        return None
     return CMIFGMState(
         modalities=("audio", "visual"),
         strength=args.fgm_lambda,
         temperature=args.fgm_tau,
         momentum=args.fgm_momentum,
         warmup_steps=args.fgm_warmup_steps,
+    )
+
+
+def parse_lr_milestones(value: str | list[int] | tuple[int, ...]) -> list[int]:
+    if isinstance(value, (list, tuple)):
+        return [int(item) for item in value]
+
+    text = str(value).strip()
+    if not text:
+        return []
+    if text.startswith("["):
+        parsed = ast.literal_eval(text)
+        if not isinstance(parsed, (list, tuple)):
+            raise ValueError(f"Expected lr milestones list, got {value!r}.")
+        return [int(item) for item in parsed]
+    return [int(item.strip()) for item in text.split(",") if item.strip()]
+
+
+def build_scheduler(
+    optimizer: torch.optim.Optimizer,
+    args: argparse.Namespace | None = None,
+) -> torch.optim.lr_scheduler.LRScheduler:
+    scheduler_name = getattr(args, "lr_scheduler", "multistep") if args is not None else "multistep"
+    if scheduler_name == "cosine":
+        epochs = int(getattr(args, "epochs", 100)) if args is not None else 100
+        return torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
+
+    milestones = parse_lr_milestones(getattr(args, "lr_decay_step", "[70]") if args is not None else "[70]")
+    gamma = float(getattr(args, "lr_decay_ratio", 0.1)) if args is not None else 0.1
+    return torch.optim.lr_scheduler.MultiStepLR(
+        optimizer,
+        milestones=milestones,
+        gamma=gamma,
+    )
+
+
+def parse_float_pair(value: str | tuple[float, float] | list[float], name: str) -> tuple[float, float]:
+    if isinstance(value, (tuple, list)):
+        values = [float(item) for item in value]
+    else:
+        text = str(value).strip()
+        if text.startswith("["):
+            parsed = ast.literal_eval(text)
+            if not isinstance(parsed, (tuple, list)):
+                raise ValueError(f"Expected {name} pair, got {value!r}.")
+            values = [float(item) for item in parsed]
+        else:
+            values = [float(item.strip()) for item in text.split(",") if item.strip()]
+    if len(values) != 2:
+        raise ValueError(f"Expected {name} to contain exactly two values, got {value!r}.")
+    return values[0], values[1]
+
+
+def build_train_image_transform(args: argparse.Namespace) -> ResizeToTensorNormalize:
+    visual_aug = getattr(args, "visual_aug", "none")
+    image_size = getattr(args, "image_size", 224)
+    if visual_aug == "none":
+        return ResizeToTensorNormalize(size=image_size)
+
+    preset = VISUAL_AUGMENTATION_PRESETS.get(visual_aug, VISUAL_AUGMENTATION_PRESETS["light"])
+    scale = preset["scale"]
+    ratio = preset["ratio"]
+    horizontal_flip_prob = preset["horizontal_flip_prob"]
+
+    if getattr(args, "aug_scale", None) is not None:
+        scale = parse_float_pair(args.aug_scale, "aug_scale")
+    if getattr(args, "aug_ratio", None) is not None:
+        ratio = parse_float_pair(args.aug_ratio, "aug_ratio")
+    if getattr(args, "aug_hflip_prob", None) is not None:
+        horizontal_flip_prob = float(args.aug_hflip_prob)
+
+    return CREMADTrainImageTransform(
+        size=image_size,
+        scale=scale,
+        ratio=ratio,
+        horizontal_flip_prob=horizontal_flip_prob,
     )
 
 
@@ -351,7 +452,8 @@ def evaluate(
 def create_dataloaders(args: argparse.Namespace) -> tuple[DataLoader, DataLoader, DataLoader, dict[str, int]]:
     samples = discover_cremad_samples(args.data_root)
     split = split_samples_from_csv(samples, args.split_csv_root)
-    image_transform = ResizeToTensorNormalize(size=args.image_size)
+    train_image_transform = build_train_image_transform(args)
+    eval_image_transform = ResizeToTensorNormalize(size=args.image_size)
 
     datasets = {
         name: CREMADAVDataset(
@@ -362,7 +464,7 @@ def create_dataloaders(args: argparse.Namespace) -> tuple[DataLoader, DataLoader
             n_fft=args.n_fft,
             hop_length=args.hop_length,
             win_length=args.win_length,
-            image_transform=image_transform,
+            image_transform=train_image_transform if name == "train" else eval_image_transform,
         )
         for name, part in split.items()
     }
@@ -524,79 +626,88 @@ def plot_history(history: list[dict[str, Any]], path: Path) -> None:
     train_acc = [item["train"]["acc"] for item in history]
     val_acc = [item["val"]["acc"] for item in history]
 
-    fig, axes = plt.subplots(1, 2, figsize=(11, 4))
-    axes[0].plot(epochs, train_loss, label="train")
-    axes[0].plot(epochs, val_loss, label="test")
-    axes[0].set_title("Loss")
-    axes[0].set_xlabel("Epoch")
-    axes[0].set_ylabel("Loss")
-    axes[0].legend()
-    axes[0].grid(True, alpha=0.3)
+    fig, axes = plt.subplots(2, 2, figsize=(11, 7), sharex=True)
+    axes[0, 0].plot(epochs, train_loss, label="train total")
+    axes[0, 0].set_title("Train Loss")
+    axes[0, 0].set_ylabel("Loss")
+    axes[0, 0].legend()
+    axes[0, 0].grid(True, alpha=0.3)
 
-    axes[1].plot(epochs, train_acc, label="train")
-    axes[1].plot(epochs, val_acc, label="test")
-    axes[1].set_title("Accuracy")
-    axes[1].set_xlabel("Epoch")
-    axes[1].set_ylabel("Accuracy")
-    axes[1].legend()
-    axes[1].grid(True, alpha=0.3)
+    axes[0, 1].plot(epochs, train_acc, label="train fusion")
+    axes[0, 1].set_title("Train Accuracy")
+    axes[0, 1].set_ylabel("Accuracy")
+    axes[0, 1].set_ylim(0.0, 1.0)
+    axes[0, 1].legend()
+    axes[0, 1].grid(True, alpha=0.3)
 
+    axes[1, 0].plot(epochs, val_loss, label="val total")
+    axes[1, 0].set_title("Val Loss")
+    axes[1, 0].set_xlabel("Epoch")
+    axes[1, 0].set_ylabel("Loss")
+    axes[1, 0].legend()
+    axes[1, 0].grid(True, alpha=0.3)
+
+    axes[1, 1].plot(epochs, val_acc, label="val fusion")
+    axes[1, 1].set_title("Val Accuracy")
+    axes[1, 1].set_xlabel("Epoch")
+    axes[1, 1].set_ylabel("Accuracy")
+    axes[1, 1].set_ylim(0.0, 1.0)
+    axes[1, 1].legend()
+    axes[1, 1].grid(True, alpha=0.3)
     fig.tight_layout()
     fig.savefig(path, dpi=160)
     plt.close(fig)
 
-    loss_path = path.with_name("loss_curves.png")
-    acc_path = path.with_name("modality_accuracy.png")
-    train_fusion_loss = [item["train"].get("fusion_loss") for item in history]
-    train_audio_loss = [item["train"].get("audio_loss") for item in history]
-    train_visual_loss = [item["train"].get("visual_loss") for item in history]
-    val_fusion_loss = [item["val"].get("fusion_loss") for item in history]
-    val_audio_loss = [item["val"].get("audio_loss") for item in history]
-    val_visual_loss = [item["val"].get("visual_loss") for item in history]
+    def plot_loss_split(split_name: str, output_path: Path) -> None:
+        split_metrics = [item[split_name] for item in history]
+        total_loss = [metrics["loss"] for metrics in split_metrics]
+        fusion_loss = [metrics.get("fusion_loss") for metrics in split_metrics]
+        audio_loss = [metrics.get("audio_loss") for metrics in split_metrics]
+        visual_loss = [metrics.get("visual_loss") for metrics in split_metrics]
 
-    fig, ax = plt.subplots(figsize=(8, 5))
-    ax.plot(epochs, train_loss, label="train total")
-    ax.plot(epochs, val_loss, label="val total")
-    if all(value is not None for value in train_fusion_loss):
-        ax.plot(epochs, train_fusion_loss, label="train fusion")
-        ax.plot(epochs, val_fusion_loss, label="val fusion")
-    if all(value is not None for value in train_audio_loss):
-        ax.plot(epochs, train_audio_loss, label="train audio")
-        ax.plot(epochs, val_audio_loss, label="val audio")
-    if all(value is not None for value in train_visual_loss):
-        ax.plot(epochs, train_visual_loss, label="train visual")
-        ax.plot(epochs, val_visual_loss, label="val visual")
-    ax.set_title("Loss Curves")
-    ax.set_xlabel("Epoch")
-    ax.set_ylabel("Loss")
-    ax.legend()
-    ax.grid(True, alpha=0.3)
-    fig.tight_layout()
-    fig.savefig(loss_path, dpi=160)
-    plt.close(fig)
+        fig, ax = plt.subplots(figsize=(8, 5))
+        ax.plot(epochs, total_loss, label="total")
+        if all(value is not None for value in fusion_loss):
+            ax.plot(epochs, fusion_loss, label="fusion")
+        if all(value is not None for value in audio_loss):
+            ax.plot(epochs, audio_loss, label="audio")
+        if all(value is not None for value in visual_loss):
+            ax.plot(epochs, visual_loss, label="visual")
+        ax.set_title(f"{split_name.title()} Loss Curves")
+        ax.set_xlabel("Epoch")
+        ax.set_ylabel("Loss")
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        fig.tight_layout()
+        fig.savefig(output_path, dpi=160)
+        plt.close(fig)
 
-    train_audio_acc = [item["train"].get("audio_acc") for item in history]
-    train_visual_acc = [item["train"].get("visual_acc") for item in history]
-    val_audio_acc = [item["val"].get("audio_acc") for item in history]
-    val_visual_acc = [item["val"].get("visual_acc") for item in history]
-    fig, ax = plt.subplots(figsize=(8, 5))
-    ax.plot(epochs, train_acc, label="train fusion")
-    ax.plot(epochs, val_acc, label="val fusion")
-    if all(value is not None for value in train_audio_acc):
-        ax.plot(epochs, train_audio_acc, label="train audio")
-        ax.plot(epochs, val_audio_acc, label="val audio")
-    if all(value is not None for value in train_visual_acc):
-        ax.plot(epochs, train_visual_acc, label="train visual")
-        ax.plot(epochs, val_visual_acc, label="val visual")
-    ax.set_title("Modality Accuracy")
-    ax.set_xlabel("Epoch")
-    ax.set_ylabel("Accuracy")
-    ax.set_ylim(0.0, 1.0)
-    ax.legend()
-    ax.grid(True, alpha=0.3)
-    fig.tight_layout()
-    fig.savefig(acc_path, dpi=160)
-    plt.close(fig)
+    def plot_accuracy_split(split_name: str, output_path: Path) -> None:
+        split_metrics = [item[split_name] for item in history]
+        fusion_acc = [metrics["acc"] for metrics in split_metrics]
+        audio_acc = [metrics.get("audio_acc") for metrics in split_metrics]
+        visual_acc = [metrics.get("visual_acc") for metrics in split_metrics]
+
+        fig, ax = plt.subplots(figsize=(8, 5))
+        ax.plot(epochs, fusion_acc, label="fusion")
+        if all(value is not None for value in audio_acc):
+            ax.plot(epochs, audio_acc, label="audio")
+        if all(value is not None for value in visual_acc):
+            ax.plot(epochs, visual_acc, label="visual")
+        ax.set_title(f"{split_name.title()} Modality Accuracy")
+        ax.set_xlabel("Epoch")
+        ax.set_ylabel("Accuracy")
+        ax.set_ylim(0.0, 1.0)
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        fig.tight_layout()
+        fig.savefig(output_path, dpi=160)
+        plt.close(fig)
+
+    plot_loss_split("train", path.with_name("train_loss_curves.png"))
+    plot_loss_split("val", path.with_name("val_loss_curves.png"))
+    plot_accuracy_split("train", path.with_name("train_modality_accuracy.png"))
+    plot_accuracy_split("val", path.with_name("val_modality_accuracy.png"))
 
 
 def run_training(args: argparse.Namespace) -> dict[str, float]:
@@ -609,7 +720,11 @@ def run_training(args: argparse.Namespace) -> dict[str, float]:
     if sizes["test"] == 0:
         raise ValueError(f"Empty test split: {sizes}")
 
-    model = build_model(args.modality, num_classes=args.num_classes).to(device)
+    model = build_model(
+        args.modality,
+        num_classes=args.num_classes,
+        fusion_dropout=getattr(args, "fusion_dropout", 0.0),
+    ).to(device)
     optimizer = torch.optim.SGD(
         model.parameters(),
         lr=args.lr,
@@ -617,7 +732,7 @@ def run_training(args: argparse.Namespace) -> dict[str, float]:
         weight_decay=args.weight_decay,
     )
     fgm_state = build_fgm_state(args)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
+    scheduler = build_scheduler(optimizer, args)
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -697,19 +812,27 @@ def run_training(args: argparse.Namespace) -> dict[str, float]:
     return result
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train CREMA-D audio/visual baseline.")
     parser.add_argument("--data-root", type=str, default="dataset/CREMA-D")
     parser.add_argument("--output-dir", type=str, default="runs/cremad_baseline")
     parser.add_argument("--modality", choices=["av", "audio", "visual"], default="av")
     parser.add_argument("--num-classes", type=int, default=6)
-    parser.add_argument("--epochs", type=int, default=50)
+    parser.add_argument("--epochs", type=int, default=80)
     parser.add_argument("--batch-size", type=int, default=16)
-    parser.add_argument("--lr", type=float, default=0.02)
+    parser.add_argument("--lr", type=float, default=0.002)
+    parser.add_argument("--lr-scheduler", choices=["multistep", "cosine"], default="multistep")
+    parser.add_argument("--lr-decay-step", type=str, default="[70]")
+    parser.add_argument("--lr-decay-ratio", type=float, default=0.1)
     parser.add_argument("--momentum", type=float, default=0.9)
-    parser.add_argument("--weight-decay", type=float, default=1e-4)
+    parser.add_argument("--weight-decay", type=float, default=5e-4)
+    parser.add_argument("--fusion-dropout", type=float, default=0.2)
     parser.add_argument("--fps", type=int, default=1)
     parser.add_argument("--image-size", type=int, default=224)
+    parser.add_argument("--visual-aug", choices=["none", "light", "medium", "strong", "custom"], default="none")
+    parser.add_argument("--aug-scale", type=str, default=None)
+    parser.add_argument("--aug-ratio", type=str, default=None)
+    parser.add_argument("--aug-hflip-prob", type=float, default=None)
     parser.add_argument("--audio-duration", type=float, default=3.0)
     parser.add_argument("--n-fft", type=int, default=512)
     parser.add_argument("--hop-length", type=int, default=160)
@@ -718,15 +841,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--device", type=str, default="cuda")
-    parser.add_argument("--pin-memory", action="store_true")
+    parser.add_argument("--pin-memory", dest="pin_memory", action="store_true")
+    parser.add_argument("--no-pin-memory", dest="pin_memory", action="store_false")
+    parser.set_defaults(pin_memory=True)
     parser.add_argument("--deterministic", action="store_true")
     parser.add_argument("--no-progress", action="store_true")
-    parser.add_argument("--fgm", action="store_true", help="Enable CMI-FGM gradient modulation for AV training.")
+    parser.add_argument("--fgm", dest="fgm", action="store_true", help="Enable CMI-FGM gradient modulation for AV training.")
+    parser.add_argument("--no-fgm", dest="fgm", action="store_false", help="Disable CMI-FGM gradient modulation.")
+    parser.set_defaults(fgm=True)
     parser.add_argument("--fgm-lambda", type=float, default=0.5)
     parser.add_argument("--fgm-tau", type=float, default=1.0)
     parser.add_argument("--fgm-momentum", type=float, default=0.9)
-    parser.add_argument("--fgm-warmup-steps", type=int, default=0)
-    return parser.parse_args()
+    parser.add_argument("--fgm-warmup-steps", type=int, default=15)
+    return parser.parse_args(argv)
 
 
 def main() -> None:

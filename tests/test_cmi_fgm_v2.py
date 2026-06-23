@@ -49,6 +49,21 @@ class CMIFGMV2Test(unittest.TestCase):
         self.assertEqual(tuple(outputs["visual_logits"].shape), (2, 6))
         self.assertTrue(torch.allclose(outputs["logits"], before, atol=1e-5))
 
+    def test_av_v2_fusion_dropout_is_configurable(self):
+        from AV_v2 import train_cremad
+        from AV_v2.models import AVBaseline
+
+        args = train_cremad.parse_args(["--fusion-dropout", "0.25"])
+        model = train_cremad.build_model(
+            args.modality,
+            num_classes=args.num_classes,
+            fusion_dropout=args.fusion_dropout,
+        )
+
+        self.assertIsInstance(model, AVBaseline)
+        self.assertIsInstance(model.fusion_dropout, torch.nn.Dropout)
+        self.assertEqual(model.fusion_dropout.p, 0.25)
+
     def test_av_v2_training_reports_fgm_metrics_when_enabled(self):
         from AV_v2.models import AVBaseline
         from AV_v2.train_cremad import forward_and_losses
@@ -183,6 +198,226 @@ class CMIFGMV2Test(unittest.TestCase):
             self.assertTrue((output_dir / "history.json").exists())
             self.assertTrue((output_dir / "history.jsonl").exists())
             self.assertTrue((output_dir / "metrics.json").exists())
+
+    def test_train_video_cremad_defaults_to_one_visual_frame(self):
+        from AV_v2 import train_video
+
+        default_args = train_video.build_dataset_args(["--dataset", "cremad"])
+        explicit_args = train_video.build_dataset_args(["--dataset", "cremad", "--use-video-frames", "3"])
+
+        self.assertEqual(default_args.fps, 1)
+        self.assertEqual(explicit_args.fps, 3)
+
+    def test_cremad_lr_is_plain_command_line_argument(self):
+        from AV_v2 import train_cremad
+
+        visual_args = train_cremad.parse_args(["--modality", "visual"])
+        av_args = train_cremad.parse_args([])
+        explicit_args = train_cremad.parse_args(["--modality", "visual", "--lr", "0.001"])
+
+        self.assertEqual(visual_args.lr, av_args.lr)
+        self.assertEqual(explicit_args.lr, 0.001)
+
+    def test_cremad_scheduler_matches_iccv_multistep_policy(self):
+        from AV_v2 import train_cremad
+
+        model = torch.nn.Linear(1, 1)
+        optimizer = torch.optim.SGD(model.parameters(), lr=0.002)
+        args = train_cremad.parse_args([])
+        scheduler = train_cremad.build_scheduler(optimizer, args)
+
+        self.assertIsInstance(scheduler, torch.optim.lr_scheduler.MultiStepLR)
+        self.assertEqual(dict(scheduler.milestones), {70: 1})
+        self.assertEqual(scheduler.gamma, 0.1)
+
+    def test_cremad_scheduler_can_be_tuned_from_command_line_args(self):
+        from AV_v2 import train_cremad
+
+        multistep_args = train_cremad.parse_args(
+            ["--lr-scheduler", "multistep", "--lr-decay-step", "[30,70]", "--lr-decay-ratio", "0.2"]
+        )
+        model = torch.nn.Linear(1, 1)
+        optimizer = torch.optim.SGD(model.parameters(), lr=0.002)
+
+        scheduler = train_cremad.build_scheduler(optimizer, multistep_args)
+
+        self.assertIsInstance(scheduler, torch.optim.lr_scheduler.MultiStepLR)
+        self.assertEqual(dict(scheduler.milestones), {30: 1, 70: 1})
+        self.assertEqual(scheduler.gamma, 0.2)
+
+        cosine_args = train_cremad.parse_args(["--lr-scheduler", "cosine", "--epochs", "12"])
+        cosine_scheduler = train_cremad.build_scheduler(optimizer, cosine_args)
+
+        self.assertIsInstance(cosine_scheduler, torch.optim.lr_scheduler.CosineAnnealingLR)
+        self.assertEqual(cosine_scheduler.T_max, 12)
+
+    def test_av_v2_plots_train_and_val_curves_separately(self):
+        from AV_v2.train_cremad import plot_history
+
+        history = [
+            {
+                "epoch": 1,
+                "train": {
+                    "loss": 3.0,
+                    "fusion_loss": 1.0,
+                    "audio_loss": 0.9,
+                    "visual_loss": 1.1,
+                    "acc": 0.2,
+                    "audio_acc": 0.3,
+                    "visual_acc": 0.25,
+                },
+                "val": {
+                    "loss": 3.2,
+                    "fusion_loss": 1.1,
+                    "audio_loss": 1.0,
+                    "visual_loss": 1.1,
+                    "acc": 0.18,
+                    "audio_acc": 0.22,
+                    "visual_acc": 0.2,
+                },
+            },
+            {
+                "epoch": 2,
+                "train": {
+                    "loss": 2.5,
+                    "fusion_loss": 0.8,
+                    "audio_loss": 0.8,
+                    "visual_loss": 0.9,
+                    "acc": 0.35,
+                    "audio_acc": 0.4,
+                    "visual_acc": 0.32,
+                },
+                "val": {
+                    "loss": 3.0,
+                    "fusion_loss": 1.0,
+                    "audio_loss": 0.95,
+                    "visual_loss": 1.05,
+                    "acc": 0.22,
+                    "audio_acc": 0.28,
+                    "visual_acc": 0.23,
+                },
+            },
+        ]
+
+        with TemporaryDirectory() as tmpdir:
+            plot_history(history, Path(tmpdir) / "curves.png")
+
+            self.assertTrue((Path(tmpdir) / "curves.png").exists())
+            self.assertTrue((Path(tmpdir) / "train_loss_curves.png").exists())
+            self.assertTrue((Path(tmpdir) / "val_loss_curves.png").exists())
+            self.assertTrue((Path(tmpdir) / "train_modality_accuracy.png").exists())
+            self.assertTrue((Path(tmpdir) / "val_modality_accuracy.png").exists())
+            self.assertFalse((Path(tmpdir) / "loss_curves.png").exists())
+            self.assertFalse((Path(tmpdir) / "modality_accuracy.png").exists())
+
+    def test_cremad_splits_use_plain_resize_normalize_without_augmentation(self):
+        from AV_v2 import train_cremad
+        from AV_v2.datasets import CREMADSample, ResizeToTensorNormalize
+
+        sample = CREMADSample(
+            sample_id="1001_IEO_HAP_HI",
+            actor_id="1001",
+            emotion="HAP",
+            label=3,
+            audio_path=Path("dummy.wav"),
+            image_dir=Path("dummy_images"),
+        )
+        args = Namespace(
+            data_root="dataset/CREMA-D",
+            split_csv_root="ICCV2025-GDL-main/dataset/data/CREMAD",
+            modality="visual",
+            fps=1,
+            audio_duration=3.0,
+            n_fft=512,
+            hop_length=160,
+            win_length=400,
+            image_size=224,
+            seed=0,
+            batch_size=1,
+            num_workers=0,
+            pin_memory=True,
+        )
+
+        with patch.object(train_cremad, "discover_cremad_samples", return_value=[sample]), patch.object(
+            train_cremad,
+            "split_samples_from_csv",
+            return_value={"train": [sample], "test": [sample]},
+        ):
+            train_loader, val_loader, test_loader, _ = train_cremad.create_dataloaders(args)
+
+        self.assertIs(type(train_loader.dataset.image_transform), ResizeToTensorNormalize)
+        self.assertIs(type(val_loader.dataset.image_transform), ResizeToTensorNormalize)
+        self.assertIs(type(test_loader.dataset.image_transform), ResizeToTensorNormalize)
+
+    def test_cremad_visual_augmentation_preset_applies_to_train_split_only(self):
+        from AV_v2 import train_cremad
+        from AV_v2.datasets import CREMADSample, CREMADTrainImageTransform, ResizeToTensorNormalize
+
+        sample = CREMADSample(
+            sample_id="1001_IEO_HAP_HI",
+            actor_id="1001",
+            emotion="HAP",
+            label=3,
+            audio_path=Path("dummy.wav"),
+            image_dir=Path("dummy_images"),
+        )
+        args = Namespace(
+            data_root="dataset/CREMA-D",
+            split_csv_root="ICCV2025-GDL-main/dataset/data/CREMAD",
+            modality="visual",
+            fps=1,
+            audio_duration=3.0,
+            n_fft=512,
+            hop_length=160,
+            win_length=400,
+            image_size=224,
+            visual_aug="light",
+            aug_scale=None,
+            aug_ratio=None,
+            aug_hflip_prob=None,
+            seed=0,
+            batch_size=1,
+            num_workers=0,
+            pin_memory=True,
+        )
+
+        with patch.object(train_cremad, "discover_cremad_samples", return_value=[sample]), patch.object(
+            train_cremad,
+            "split_samples_from_csv",
+            return_value={"train": [sample], "test": [sample]},
+        ):
+            train_loader, val_loader, test_loader, _ = train_cremad.create_dataloaders(args)
+
+        self.assertIs(type(train_loader.dataset.image_transform), CREMADTrainImageTransform)
+        self.assertEqual(train_loader.dataset.image_transform.scale, (0.85, 1.0))
+        self.assertEqual(train_loader.dataset.image_transform.ratio, (0.95, 1.05))
+        self.assertEqual(train_loader.dataset.image_transform.horizontal_flip_prob, 0.0)
+        self.assertIs(type(val_loader.dataset.image_transform), ResizeToTensorNormalize)
+        self.assertIs(type(test_loader.dataset.image_transform), ResizeToTensorNormalize)
+
+    def test_cremad_visual_augmentation_strength_is_tunable_from_args(self):
+        from AV_v2 import train_cremad
+        from AV_v2.datasets import CREMADTrainImageTransform
+
+        args = train_cremad.parse_args(
+            [
+                "--visual-aug",
+                "custom",
+                "--aug-scale",
+                "0.8,1.0",
+                "--aug-ratio",
+                "0.9,1.1",
+                "--aug-hflip-prob",
+                "0.2",
+            ]
+        )
+
+        transform = train_cremad.build_train_image_transform(args)
+
+        self.assertIs(type(transform), CREMADTrainImageTransform)
+        self.assertEqual(transform.scale, (0.8, 1.0))
+        self.assertEqual(transform.ratio, (0.9, 1.1))
+        self.assertEqual(transform.horizontal_flip_prob, 0.2)
 
 
 if __name__ == "__main__":
