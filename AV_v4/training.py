@@ -22,7 +22,7 @@ from cmi_fgm import (
     register_feature_gradient_hooks,
     register_split_linear_weight_hook,
 )
-from AV_v3.models import AVBaseline, AudioBaseline, VisualBaseline
+from AV_v4.models import AVBaseline, AudioBaseline, VisualBaseline
 
 
 def set_seed(seed: int, deterministic: bool = False) -> None:
@@ -149,13 +149,18 @@ def forward_and_losses(
     modality: str,
     criterion: nn.Module,
     fgm_state: CMIFGMState | None = None,
+    audio_loss_weight: float = 1.0,
+    visual_loss_weight: float = 1.0,
+    detach_probe_features: bool | None = None,
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor], list[torch.utils.hooks.RemovableHandle]]:
     handles: list[torch.utils.hooks.RemovableHandle] = []
     if modality == "av" and hasattr(model, "forward_with_modal_logits"):
-        detach_probe_features = True
-        if fgm_state is not None and fgm_state.num_updates < fgm_state.warmup_steps:
-            detach_probe_features = False
-        outputs = model.forward_with_modal_logits(*inputs, detach_probe_features=detach_probe_features)
+        resolved_detach = detach_probe_features
+        if resolved_detach is None:
+            resolved_detach = True
+            if fgm_state is not None and fgm_state.num_updates < fgm_state.warmup_steps:
+                resolved_detach = False
+        outputs = model.forward_with_modal_logits(*inputs, detach_probe_features=resolved_detach)
         logits = outputs["logits"]
         fusion_per_sample = criterion(logits, labels)
         audio_per_sample = criterion(outputs["audio_logits"], labels)
@@ -164,7 +169,11 @@ def forward_and_losses(
         audio_loss = audio_per_sample.mean()
         visual_loss = visual_per_sample.mean()
         losses = {
-            "loss": fusion_loss + audio_loss + visual_loss,
+            "loss": (
+                fusion_loss
+                + audio_loss_weight * audio_loss
+                + visual_loss_weight * visual_loss
+            ),
             "fusion_loss": fusion_loss,
             "audio_loss": audio_loss,
             "visual_loss": visual_loss,
@@ -255,6 +264,9 @@ def train_one_epoch(
     epoch: int | None = None,
     show_progress: bool = False,
     fgm_state: CMIFGMState | None = None,
+    audio_loss_weight: float = 1.0,
+    visual_loss_weight: float = 1.0,
+    detach_probe_features: bool | None = None,
 ) -> dict[str, float]:
     model.train()
     criterion = nn.CrossEntropyLoss(reduction="none")
@@ -280,6 +292,9 @@ def train_one_epoch(
             modality,
             criterion,
             fgm_state=fgm_state,
+            audio_loss_weight=audio_loss_weight,
+            visual_loss_weight=visual_loss_weight,
+            detach_probe_features=detach_probe_features,
         )
         loss = losses["loss"]
         loss.backward()
@@ -318,6 +333,9 @@ def evaluate(
     epoch: int | None = None,
     split_name: str = "eval",
     show_progress: bool = False,
+    audio_loss_weight: float = 1.0,
+    visual_loss_weight: float = 1.0,
+    detach_probe_features: bool | None = None,
 ) -> dict[str, float]:
     model.eval()
     criterion = nn.CrossEntropyLoss(reduction="none")
@@ -340,6 +358,9 @@ def evaluate(
             labels,
             modality,
             criterion,
+            audio_loss_weight=audio_loss_weight,
+            visual_loss_weight=visual_loss_weight,
+            detach_probe_features=detach_probe_features,
         )
         for handle in handles:
             handle.remove()
@@ -415,12 +436,31 @@ def format_metrics(prefix: str, metrics: dict[str, float]) -> str:
     return " ".join(parts)
 
 
-def format_epoch_report(epoch: int, train_metrics: dict[str, float], val_metrics: dict[str, float]) -> str:
+def format_duration(seconds: float) -> str:
+    total_seconds = max(0, int(round(seconds)))
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+
+def format_epoch_report(
+    epoch: int,
+    train_metrics: dict[str, float],
+    val_metrics: dict[str, float],
+    epoch_seconds: float | None = None,
+    elapsed_seconds: float | None = None,
+) -> str:
     def metric(metrics: dict[str, float], name: str) -> str:
         return f"{metrics[name]:.4f}" if name in metrics else "-"
 
+    heading = f"Epoch {epoch:03d}"
+    if epoch_seconds is not None:
+        heading += f" | time {format_duration(epoch_seconds)}"
+    if elapsed_seconds is not None:
+        heading += f" | elapsed {format_duration(elapsed_seconds)}"
+
     lines = [
-        f"Epoch {epoch:03d}",
+        heading,
         "  train | "
         f"loss {metric(train_metrics, 'loss')} | "
         f"fusion {metric(train_metrics, 'fusion_loss')} | "

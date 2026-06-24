@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -12,8 +13,8 @@ if __package__ is None or __package__ == "":
 import torch
 from torch.utils.data import DataLoader
 
-from AV_v3.datasets import KSDataset, ResizeToTensorNormalize, discover_ks_samples, load_ks_classes
-from AV_v3.training import (
+from AV_v4.datasets import AVEDataset, ResizeToTensorNormalize, discover_ave_samples
+from AV_v4.training import (
     append_epoch_log,
     build_fgm_state,
     build_model,
@@ -31,33 +32,18 @@ from AV_v3.training import (
 
 
 def create_dataloaders(args: argparse.Namespace) -> tuple[DataLoader, DataLoader, DataLoader, dict[str, int]]:
-    train_samples, _ = discover_ks_samples(args.data_root, args.class_file, mode="train")
-    test_samples, class_to_idx = discover_ks_samples(args.data_root, args.class_file, mode="test")
+    train_samples, class_to_idx = discover_ave_samples(args.data_root, split="train")
+    test_samples, _ = discover_ave_samples(args.data_root, split="test")
     args.num_classes = len(class_to_idx)
-    image_transform = ResizeToTensorNormalize(size=args.image_size)
 
-    train_dataset = KSDataset(
-        train_samples,
-        modality=args.modality,
-        mode="train",
-        use_video_frames=args.use_video_frames,
-        audio_duration=args.audio_duration,
-        n_fft=args.n_fft,
-        hop_length=args.hop_length,
-        win_length=args.win_length,
-        image_transform=image_transform,
-    )
-    test_dataset = KSDataset(
-        test_samples,
-        modality=args.modality,
-        mode="test",
-        use_video_frames=args.use_video_frames,
-        audio_duration=args.audio_duration,
-        n_fft=args.n_fft,
-        hop_length=args.hop_length,
-        win_length=args.win_length,
-        image_transform=image_transform,
-    )
+    image_transform = ResizeToTensorNormalize(size=args.image_size)
+    dataset_kwargs: dict[str, Any] = {
+        "modality": args.modality,
+        "use_video_frames": args.use_video_frames,
+        "image_transform": image_transform,
+    }
+    train_dataset = AVEDataset(train_samples, mode="train", **dataset_kwargs)
+    test_dataset = AVEDataset(test_samples, mode="test", **dataset_kwargs)
 
     generator = torch.Generator()
     generator.manual_seed(args.seed)
@@ -70,7 +56,11 @@ def create_dataloaders(args: argparse.Namespace) -> tuple[DataLoader, DataLoader
     }
     train_loader = DataLoader(train_dataset, shuffle=True, drop_last=False, **loader_kwargs)
     test_loader = DataLoader(test_dataset, shuffle=False, drop_last=False, **loader_kwargs)
-    sizes = {"train": len(train_dataset), "test": len(test_dataset), "val": len(test_dataset)}
+    sizes = {
+        "train": len(train_dataset),
+        "val": len(test_dataset),
+        "test": len(test_dataset),
+    }
     return train_loader, test_loader, test_loader, sizes
 
 
@@ -82,7 +72,7 @@ def run_training(args: argparse.Namespace) -> dict[str, float]:
 
     train_loader, val_loader, test_loader, sizes = create_dataloaders(args)
     if sizes["test"] == 0:
-        raise ValueError(f"Empty KS test split: {sizes}")
+        raise ValueError(f"Empty AVE test split: {sizes}")
 
     model = build_model(args.modality, num_classes=args.num_classes).to(device)
     optimizer = torch.optim.SGD(
@@ -96,8 +86,7 @@ def run_training(args: argparse.Namespace) -> dict[str, float]:
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    config = vars(args)
-    (output_dir / "config.json").write_text(json.dumps(config, indent=2), encoding="utf-8")
+    (output_dir / "config.json").write_text(json.dumps(vars(args), indent=2), encoding="utf-8")
     history_path = output_dir / "history.jsonl"
     history_json_path = output_dir / "history.json"
     curve_path = output_dir / "curves.png"
@@ -107,9 +96,11 @@ def run_training(args: argparse.Namespace) -> dict[str, float]:
     best_epoch = 0
     best_metrics: dict[str, float] = {}
 
-    print(f"KS classes: {args.num_classes} ({load_ks_classes(args.class_file)})")
+    print(f"AVE classes: {args.num_classes}")
     print(f"Split sizes: {sizes}")
+    training_started_at = time.perf_counter()
     for epoch in range(1, args.epochs + 1):
+        epoch_started_at = time.perf_counter()
         train_metrics = train_one_epoch(
             model,
             train_loader,
@@ -119,6 +110,9 @@ def run_training(args: argparse.Namespace) -> dict[str, float]:
             epoch=epoch,
             show_progress=not args.no_progress,
             fgm_state=fgm_state,
+            audio_loss_weight=args.audio_loss_weight,
+            visual_loss_weight=args.visual_loss_weight,
+            detach_probe_features=False,
         )
         val_metrics = evaluate(
             model,
@@ -128,14 +122,29 @@ def run_training(args: argparse.Namespace) -> dict[str, float]:
             epoch=epoch,
             split_name="val",
             show_progress=not args.no_progress,
+            audio_loss_weight=args.audio_loss_weight,
+            visual_loss_weight=args.visual_loss_weight,
+            detach_probe_features=False,
         )
         scheduler.step()
 
-        print(format_epoch_report(epoch, train_metrics, val_metrics))
+        epoch_seconds = time.perf_counter() - epoch_started_at
+        elapsed_seconds = time.perf_counter() - training_started_at
+        print(
+            format_epoch_report(
+                epoch,
+                train_metrics,
+                val_metrics,
+                epoch_seconds=epoch_seconds,
+                elapsed_seconds=elapsed_seconds,
+            )
+        )
 
         epoch_record = {
             "epoch": epoch,
             "lr": float(optimizer.param_groups[0]["lr"]),
+            "epoch_seconds": epoch_seconds,
+            "elapsed_seconds": elapsed_seconds,
             "train": train_metrics,
             "val": val_metrics,
         }
@@ -159,6 +168,9 @@ def run_training(args: argparse.Namespace) -> dict[str, float]:
         args.modality,
         split_name="test",
         show_progress=not args.no_progress,
+        audio_loss_weight=args.audio_loss_weight,
+        visual_loss_weight=args.visual_loss_weight,
+        detach_probe_features=False,
     )
     result = {
         "best_epoch": float(best_epoch),
@@ -175,26 +187,23 @@ def run_training(args: argparse.Namespace) -> dict[str, float]:
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Train KineticSound/KinectSound audio/visual baseline.")
-    parser.add_argument("--data-root", type=str, default="dataset/kinect_sound")
-    parser.add_argument("--class-file", type=str, default="ICCV2025-GDL-main/dataset/data/KineticSound/class.txt")
-    parser.add_argument("--output-dir", type=str, default="runs/ks_baseline")
+    parser = argparse.ArgumentParser(description="Train AVE audio/visual baseline.")
+    parser.add_argument("--data-root", type=str, default="dataset/AVE")
+    parser.add_argument("--output-dir", type=str, default="runs/ave_baseline")
     parser.add_argument("--modality", choices=["av", "audio", "visual"], default="av")
-    parser.add_argument("--epochs", type=int, default=200)
-    parser.add_argument("--batch-size", type=int, default=16)
+    parser.add_argument("--epochs", type=int, default=80)
+    parser.add_argument("--batch-size", type=int, default=12)
     parser.add_argument("--lr", type=float, default=0.002)
     parser.add_argument("--lr-scheduler", choices=["multistep", "cosine"], default="multistep")
-    parser.add_argument("--lr-decay-step", type=str, default="[60]")
+    parser.add_argument("--lr-decay-step", type=str, default="[40]")
     parser.add_argument("--lr-decay-ratio", type=float, default=0.1)
     parser.add_argument("--momentum", type=float, default=0.9)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
+    parser.add_argument("--audio-loss-weight", type=float, default=5.0)
+    parser.add_argument("--visual-loss-weight", type=float, default=5.0)
     parser.add_argument("--use-video-frames", type=int, default=3)
     parser.add_argument("--image-size", type=int, default=224)
-    parser.add_argument("--audio-duration", type=float, default=5.0)
-    parser.add_argument("--n-fft", type=int, default=256)
-    parser.add_argument("--hop-length", type=int, default=128)
-    parser.add_argument("--win-length", type=int, default=256)
-    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--pin-memory", dest="pin_memory", action="store_true")
@@ -210,7 +219,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--fgm-momentum", type=float, default=0.9)
     parser.add_argument("--fgm-warmup-steps", type=int, default=15)
     args = parser.parse_args(argv)
-    args.num_classes = len(load_ks_classes(args.class_file))
+    args.num_classes = 28
     return args
 
 

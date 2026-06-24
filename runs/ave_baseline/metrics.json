@@ -1,6 +1,12 @@
 {
-  "best_epoch": 47.0,
-  "best_val_acc": 0.7213930348258707,
-  "test_loss": 7.047927670217865,
-  "test_acc": 0.7139303482587065
+  "best_epoch": 72.0,
+  "best_val_acc": 0.7263681592039801,
+  "test_loss": 29.692540496142943,
+  "test_fusion_loss": 1.2092813591458904,
+  "test_audio_loss": 2.148137379938097,
+  "test_visual_loss": 3.54851451827519,
+  "test_audio_acc": 0.6442786254989568,
+  "test_visual_acc": 0.3333333405985761,
+  "test_acc": 0.7263681592039801,
+  "test_macro_f1": 0.6828969865588255
 }

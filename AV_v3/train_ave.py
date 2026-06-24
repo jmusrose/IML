@@ -17,6 +17,7 @@ from AV_v3.training import (
     append_epoch_log,
     build_fgm_state,
     build_model,
+    build_scheduler,
     evaluate,
     format_metrics,
     format_epoch_report,
@@ -31,7 +32,6 @@ from AV_v3.training import (
 
 def create_dataloaders(args: argparse.Namespace) -> tuple[DataLoader, DataLoader, DataLoader, dict[str, int]]:
     train_samples, class_to_idx = discover_ave_samples(args.data_root, split="train")
-    val_samples, _ = discover_ave_samples(args.data_root, split="val")
     test_samples, _ = discover_ave_samples(args.data_root, split="test")
     args.num_classes = len(class_to_idx)
 
@@ -42,7 +42,6 @@ def create_dataloaders(args: argparse.Namespace) -> tuple[DataLoader, DataLoader
         "image_transform": image_transform,
     }
     train_dataset = AVEDataset(train_samples, mode="train", **dataset_kwargs)
-    val_dataset = AVEDataset(val_samples, mode="val", **dataset_kwargs)
     test_dataset = AVEDataset(test_samples, mode="test", **dataset_kwargs)
 
     generator = torch.Generator()
@@ -55,14 +54,13 @@ def create_dataloaders(args: argparse.Namespace) -> tuple[DataLoader, DataLoader
         "generator": generator,
     }
     train_loader = DataLoader(train_dataset, shuffle=True, drop_last=False, **loader_kwargs)
-    val_loader = DataLoader(val_dataset, shuffle=False, drop_last=False, **loader_kwargs)
     test_loader = DataLoader(test_dataset, shuffle=False, drop_last=False, **loader_kwargs)
     sizes = {
         "train": len(train_dataset),
-        "val": len(val_dataset),
+        "val": len(test_dataset),
         "test": len(test_dataset),
     }
-    return train_loader, val_loader, test_loader, sizes
+    return train_loader, test_loader, test_loader, sizes
 
 
 def run_training(args: argparse.Namespace) -> dict[str, float]:
@@ -83,7 +81,7 @@ def run_training(args: argparse.Namespace) -> dict[str, float]:
         weight_decay=args.weight_decay,
     )
     fgm_state = build_fgm_state(args)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
+    scheduler = build_scheduler(optimizer, args)
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -169,9 +167,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--data-root", type=str, default="dataset/AVE")
     parser.add_argument("--output-dir", type=str, default="runs/ave_baseline")
     parser.add_argument("--modality", choices=["av", "audio", "visual"], default="av")
-    parser.add_argument("--epochs", type=int, default=50)
-    parser.add_argument("--batch-size", type=int, default=8)
-    parser.add_argument("--lr", type=float, default=0.02)
+    parser.add_argument("--epochs", type=int, default=80)
+    parser.add_argument("--batch-size", type=int, default=12)
+    parser.add_argument("--lr", type=float, default=0.002)
+    parser.add_argument("--lr-scheduler", choices=["multistep", "cosine"], default="multistep")
+    parser.add_argument("--lr-decay-step", type=str, default="[40]")
+    parser.add_argument("--lr-decay-ratio", type=float, default=0.1)
     parser.add_argument("--momentum", type=float, default=0.9)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
     parser.add_argument("--use-video-frames", type=int, default=3)
@@ -190,7 +191,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--fgm-lambda", type=float, default=0.5)
     parser.add_argument("--fgm-tau", type=float, default=1.0)
     parser.add_argument("--fgm-momentum", type=float, default=0.9)
-    parser.add_argument("--fgm-warmup-steps", type=int, default=10)
+    parser.add_argument("--fgm-warmup-steps", type=int, default=51)
     args = parser.parse_args(argv)
     args.num_classes = 28
     return args

@@ -126,8 +126,8 @@ def test_av_v3_ave_create_dataloaders_uses_v3_dataset():
         train_loader, val_loader, test_loader, sizes = train_ave.create_dataloaders(args)
 
         assert isinstance(train_loader.dataset, AVEDataset)
-        assert isinstance(val_loader.dataset, AVEDataset)
         assert isinstance(test_loader.dataset, AVEDataset)
+        assert val_loader is test_loader
         assert sizes == {"train": 2, "val": 1, "test": 1}
         assert args.num_classes == 2
 
@@ -144,8 +144,34 @@ def test_av_v3_ks_and_ave_parse_args_accept_argv():
 
     assert ks_args.device == "cpu"
     assert ks_args.num_classes == 2
+    assert ks_args.lr_scheduler == "multistep"
+    assert ks_args.lr_decay_step == "[60]"
+    assert ks_args.lr_decay_ratio == 0.1
     assert ave_args.device == "cpu"
     assert ave_args.num_classes == 28
+    assert ave_args.lr_scheduler == "multistep"
+    assert ave_args.lr_decay_step == "[60]"
+    assert ave_args.lr_decay_ratio == 0.1
+
+
+def test_av_v3_ks_and_ave_default_to_multistep_scheduler():
+    from AV_v3 import train_ave, train_ks
+
+    parameter = torch.nn.Parameter(torch.tensor(1.0))
+    optimizer = torch.optim.SGD([parameter], lr=0.002)
+
+    for module in (train_ks, train_ave):
+        args = Namespace(
+            epochs=200,
+            lr_scheduler="multistep",
+            lr_decay_step="[60]",
+            lr_decay_ratio=0.1,
+        )
+        scheduler = module.build_scheduler(optimizer, args)
+
+        assert isinstance(scheduler, torch.optim.lr_scheduler.MultiStepLR)
+        assert scheduler.milestones == {60: 1}
+        assert scheduler.gamma == 0.1
 
 
 def test_av_v3_ks_and_ave_use_shared_v3_training_module():
