@@ -1,0 +1,12 @@
+{
+  "best_epoch": 103.0,
+  "best_val_acc": 0.7189054726368159,
+  "test_loss": 30.127369467891864,
+  "test_fusion_loss": 1.1933926699766473,
+  "test_audio_loss": 2.101493511182159,
+  "test_visual_loss": 3.6853018732213263,
+  "test_audio_acc": 0.6194030001981935,
+  "test_visual_acc": 0.3507462762184997,
+  "test_acc": 0.7189054726368159,
+  "test_macro_f1": 0.6816735673638418
+}

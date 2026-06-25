@@ -1,12 +1,12 @@
 {
-  "best_epoch": 72.0,
-  "best_val_acc": 0.7263681592039801,
-  "test_loss": 29.692540496142943,
-  "test_fusion_loss": 1.2092813591458904,
-  "test_audio_loss": 2.148137379938097,
-  "test_visual_loss": 3.54851451827519,
-  "test_audio_acc": 0.6442786254989568,
-  "test_visual_acc": 0.3333333405985761,
-  "test_acc": 0.7263681592039801,
-  "test_macro_f1": 0.6828969865588255
+  "best_epoch": 108.0,
+  "best_val_acc": 0.7487562189054726,
+  "test_loss": 21.093887727652024,
+  "test_fusion_loss": 1.330656166730532,
+  "test_audio_loss": 1.9194015442435421,
+  "test_visual_loss": 3.5687659996659007,
+  "test_audio_acc": 0.646766183981255,
+  "test_visual_acc": 0.3631840893136921,
+  "test_acc": 0.7487562189054726,
+  "test_macro_f1": 0.7134393850783116
 }

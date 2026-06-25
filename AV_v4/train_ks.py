@@ -12,8 +12,8 @@ if __package__ is None or __package__ == "":
 import torch
 from torch.utils.data import DataLoader
 
-from AV_v3.datasets import KSDataset, ResizeToTensorNormalize, discover_ks_samples, load_ks_classes
-from AV_v3.training import (
+from AV_v4.datasets import KSDataset, ResizeToTensorNormalize, discover_ks_samples, load_ks_classes
+from AV_v4.training import (
     append_epoch_log,
     build_fgm_state,
     build_model,
@@ -119,6 +119,8 @@ def run_training(args: argparse.Namespace) -> dict[str, float]:
             epoch=epoch,
             show_progress=not args.no_progress,
             fgm_state=fgm_state,
+            audio_loss_weight=args.audio_loss_weight,
+            visual_loss_weight=args.visual_loss_weight,
         )
         val_metrics = evaluate(
             model,
@@ -128,6 +130,8 @@ def run_training(args: argparse.Namespace) -> dict[str, float]:
             epoch=epoch,
             split_name="val",
             show_progress=not args.no_progress,
+            audio_loss_weight=args.audio_loss_weight,
+            visual_loss_weight=args.visual_loss_weight,
         )
         scheduler.step()
 
@@ -159,6 +163,8 @@ def run_training(args: argparse.Namespace) -> dict[str, float]:
         args.modality,
         split_name="test",
         show_progress=not args.no_progress,
+        audio_loss_weight=args.audio_loss_weight,
+        visual_loss_weight=args.visual_loss_weight,
     )
     result = {
         "best_epoch": float(best_epoch),
@@ -180,14 +186,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--class-file", type=str, default="ICCV2025-GDL-main/dataset/data/KineticSound/class.txt")
     parser.add_argument("--output-dir", type=str, default="runs/ks_baseline")
     parser.add_argument("--modality", choices=["av", "audio", "visual"], default="av")
-    parser.add_argument("--epochs", type=int, default=200)
+    parser.add_argument("--epochs", type=int, default=80)
     parser.add_argument("--batch-size", type=int, default=16)
-    parser.add_argument("--lr", type=float, default=0.002)
+    parser.add_argument("--lr", type=float, default=0.005)
     parser.add_argument("--lr-scheduler", choices=["multistep", "cosine"], default="multistep")
-    parser.add_argument("--lr-decay-step", type=str, default="[60]")
+    parser.add_argument("--lr-decay-step", type=str, default="[30,50,70]")
     parser.add_argument("--lr-decay-ratio", type=float, default=0.1)
     parser.add_argument("--momentum", type=float, default=0.9)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
+    parser.add_argument("--audio-loss-weight", type=float, default=1.0)
+    parser.add_argument("--visual-loss-weight", type=float, default=1.0)
     parser.add_argument("--use-video-frames", type=int, default=3)
     parser.add_argument("--image-size", type=int, default=224)
     parser.add_argument("--audio-duration", type=float, default=5.0)

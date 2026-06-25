@@ -1,0 +1,1176 @@
+Geometric Gradient Divergence Modulation for Imbalanced
+Multimodal Learning
+Disen Hu
+School of Computer Science and
+Technology, Tongji University
+Shanghai, China
+School of Computer Science and
+Engineering, University of Electronic
+Science and Technology of China
+Chengdu, China
+Xun Jiang
+School of Computer Science and
+Engineering, University of Electronic
+Science and Technology of China
+Chengdu, China
+Zhe Sun
+Faculty of Health Data Science,
+Juntendo University
+Tokyo, Japan
+Hao Yang
+Meituan
+Shanghai, China
+Chong Peng
+Meituan
+Shanghai, China
+Peng Yan
+Meituan
+Shanghai, China
+Heng Tao Shen
+School of Computer Science and
+Technology, Tongji University
+Shanghai, China
+Xing Xu∗
+School of Computer Science and
+Technology, Tongji University
+Shanghai, China
+Abstract
+Multimodal learning, which has been given great significance re-
+cently, may face the challenge of the imbalanced multimodal phe-
+nomenon, which leads to the insufficient optimization of both
+multimodal and unimodal objectives. The core problem lies in
+the optimization conflicts between the above optimization objec-
+tives, resulting in the diverse updating directions and strengths
+that cause antagonism between them. In this paper, we mathe-
+matically analyze the optimization processes of imbalanced mul-
+timodal learning in the hyperspaces from a novel geometric per-
+spective. Additionally, based on our theoretical analysis, we de-
+fined the volumes of the gradients constructed parallel polyhedron
+in the hyperspace to quantify the misalignment between the op-
+timization objectives. Subsequently, we proposed the Geometric
+Gradient Divergence Modulation (GGDM), which leverages the
+volumes of gradient polyhedron to perform gradient modulation,
+encouraging alignment among gradients and promoting a syn-
+ergistic optimization effect. Lastly, we evaluate our GGDM on
+five widely used multimodal benchmarks, where RGB image, op-
+tical flow, text, image, video and audio are involved. Our method
+achieved state-of-the-art performance compared to other imbal-
+anced multimodal learning methods. Our code is available at: https:
+//github.com/ConstantineWayne/GGDM.
+∗Corresponding Author
+Permission to make digital or hard copies of all or part of this work for personal or
+classroom use is granted without fee provided that copies are not made or distributed
+for profit or commercial advantage and that copies bear this notice and the full citation
+on the first page. Copyrights for components of this work owned by others than the
+author(s) must be honored. Abstracting with credit is permitted. To copy otherwise, or
+republish, to post on servers or to redistribute to lists, requires prior specific permission
+and/or a fee. Request permissions from permissions@acm.org.
+MM ’25, Dublin, Ireland
+© 2025 Copyright held by the owner/author(s). Publication rights licensed to ACM.
+ACM ISBN 979-8-4007-2035-2/2025/10
+https://doi.org/10.1145/3746027.3755139
+CCS Concepts
+• Computing methodologies → Machine learning approaches.
+Keywords
+Multimodal Learning, Imbalanced Multimodal Learning, Hyper-
+space Polyhedron, Metric Geometry
+ACM Reference Format:
+Disen Hu, Xun Jiang, Zhe Sun, Hao Yang, Chong Peng, Peng Yan, Heng Tao
+Shen, and Xing Xu. 2025. Geometric Gradient Divergence Modulation for Im-
+balanced Multimodal Learning. In Proceedings of the 33rd ACM International
+Conference on Multimedia (MM ’25), October 27–31, 2025, Dublin, Ireland.
+ACM, New York, NY, USA, 9 pages. https://doi.org/10.1145/3746027.3755139
+1 Introduction
+Multimodal learning (MML) [2, 18, 29] integrates multiple signals
+from heterogeneous modalities, which shows outstanding perfor-
+mances compared to unimodal learning in various downstream
+multimedia tasks, such as cross-modal retrieval [5, 42], multimedia
+content understanding [23, 25], and affective computing [17, 24].
+Recent researches [8, 13, 31, 38, 41, 44] have revealed the potential
+risks of imbalanced multimodal learning, a phenomenon in which
+one particular modality with richer semantic information will dom-
+inate the whole optimization process, leading to the insufficiently
+unleashing the potential of multimodal models.
+Many researchers have tackled the challenge of Imbalanced Mul-
+timodal Learning (IML). Previous works [13, 22, 28, 31] primarily
+follow joint training paradigms with a single multimodal optimiza-
+tion objective to balance learning across modalities. However, Wei
+et al. [40] argue that previous IML methods focusing solely on uni-
+modal perspectives overlook the fact that unimodal optimization
+objectives can actually support multimodal learning by mitigating
+competition between modalities. Building on this insight, methods
+[12, 43] that effectively integrate both unimodal and multimodal
+1337
+MM ’25, October 27–31, 2025, Dublin, Ireland Disen Hu et al.
+(a) Gradient Distributions in Hyperspace
+�1
+�3
+����
+’
+�2
+����
+’
+���
+�1
+�3
+����
+�2
+����
+���
+’
+Imbalanced Balanced
+(b) Gradients Volumes and Modality Accuracy on CREMA-D and Kinestics Sounds
+Figure 1: (a) Gradients interactions in the hyper-dimensional space, it is clear to observe the antagonistic and synergetic inter-
+actions between unimodal and components of multimodal optimization objectives, as well as their directions and strengths.
+(b) Visualization of the gradient polyhedron volumes and modal accuracies on Kinetics-Sounds (left) and CREMA-D (right).
+optimization objectives—enabling them to cooperate rather than
+compete—have demonstrated superior performance compared to
+those relying solely on unimodal optimization. Although they have
+acquired promising results, we observe that these works [19, 31, 38]
+predominantly characterize multimodal gradient interactions in
+two-dimensional spaces, which implicitly assumes that gradients
+can be fully described by their pairwise angular relationships in
+low-dimensional space. However, this simplification overlooks the
+fact that gradients from joint optimization objectives can unevenly
+influence the updates of unimodal encoders, thereby indirectly alter-
+ing their individual optimization trajectories. As a result, modeling
+such interactions in a simple two-dimensional space fails to capture
+the high-dimensional, intricate nature of multimodal optimization.
+Based on this insight, we propose a hypothesis: What if we explore
+these interactions in a higher-dimensional gradient space?
+As illustrated in Fig. 1(a), we use a three-dimensional space as an
+example to extend the traditional two-dimensional gradient space.
+In this hyperspace, each gradient vector simultaneously captures
+its magnitude (length), direction, and interactions (via angles) with
+other objectives. Compared to conventional two-dimensional ap-
+proaches, this higher-dimensional geometric structure enables a
+more intuitive and comprehensive visualization of synergistic and
+antagonistic effects among updating gradients. For example, large
+angles between a unimodal objective and components of the mul-
+timodal objective may indicate potential conflicts, while similar
+effects can be observed among the components within the multi-
+modal objective itself. Moreover, disparities in gradient magnitudes
+can lead to imbalanced learning, where certain modalities dominate
+the optimization process. Finally, the convex polyhedron spanned
+by the gradient vectors captures all possible linear combinations
+of these gradients, providing a geometric framework for under-
+standing and modulating the space of feasible parameter updates.
+Since the interactions between different optimization objectives
+are more clearly manifested in high-dimensional gradient spaces,
+a natural question arises: How can we quantitatively measure the
+misalignment and imbalance among modalities in this space?
+Motivated by this question, we propose using the volume of the
+convex polyhedron formed by the updating gradients as a geometric
+proxy for optimization imbalance. As shown in Fig. 1(b), we empiri-
+cally observe that the polyhedron volume tends to decrease during
+training while the corresponding modality accuracy increases. This
+suggests a potential correlation between gradient volume and mul-
+timodal model performance, where smaller volumes may indicate
+better alignment and more balanced updates. To further validate
+this hypothesis, we not only provide a theoretical analysis but also
+conduct comprehensive empirical studies to reveal the relationship.
+In this paper, we first provide a novel geometric perspective to
+reveal the property of multimodal optimization and the interac-
+tions between different optimization objectives in the hyperspace.
+Furtherly, we theoretically explain the imbalanced multimodal phe-
+nomenon using the gradients formulated parallel polyhedron and
+confirm that the key to mitigate the imbalanced multimodal learn-
+ing is to shrink the polyhedron’s volumes. Additionally, we im-
+plement the gradient modulation technique, namely Geometric
+Gradient Divergence Modulation (GGDM), to align the multimodal
+and unimodal optimization objectives to reduce antagonism and
+exert synergistic effects between them. Finally, we evaluate GGDM
+on five multimodal datasets comprised RGB images, optical flow,
+text, audio, and video, and our method reaches state-of-the-art
+performance on all of the datasets.
+In conclusion, our contribution can be summarized in threefold:
+(1) We provide a theoretical analysis of the interactions between
+multimodal and unimodal optimization objectives from a geometric
+perspective in high-dimensional spaces. (2) We introduce a geomet-
+ric metric to quantify the gradient divergence during multimodal
+learning: the volume of the convex polyhedron spanned by dif-
+ferent gradients, which quantifies the degree of imbalance during
+optimization. (3) We incorporate gradient polyhedron volumes
+into a gradient modulation strategy to reduce conflicts between
+optimization objectives and mitigate modality imbalance.
+2 Related Work
+Imbalanced Multimodal Learning (IML). The IML is a detri-
+mental issue in multimodal learning caused by the disparity in
+semantic richness across different modalities, resulting in the opti-
+mization process heavily relying on a single modality. Furthermore,
+this imbalance limits the potential of the multimodal model to ef-
+fectively integrate multimodal signals. Recent researches have pro-
+posed various methods to address this challenge, including gradient
+modulation [28, 31], knowledge distillation [9], and loss function
+1338
+Geometric Gradient Divergence Modulation for Imbalanced Multimodal Learning MM ’25, October 27–31, 2025, Dublin, Ireland
+Modality 1
+Encoder
+Modality 2
+Encoder
+Modality1
+Classifier
+Modality2
+Classifier
+Multi
+Classifier
+Cross
+Entropy
+Loss
+Graident Descent
+Gradient
+Modulation
+Feed-forward
+Feed-forward
+Backward
+Backward
+Gradient Modulation
+Graidents
+���
+���
+��
+������ ������� �������
+������� �������� ��������
+������� �������� ��������
+Gradients Covariance Matrix
+Balanced Volume
+Adjust
+Modulate
+����
+’
+����
+’
+���
+’
+Gradient
+Modulation
+Imbalanced Volume
+Compute
+Training Pipline
+��
+���
+Figure 2: An illustration of our GGDM, the training pipeline is shown in the left part, in which we use the stochastic gradient
+descent to update the parameters of each modality encoder. While our gradient modulation module lies in the right part.
+design [12, 13]. Although the above method addresses imbalanced
+multimodal learning by facilitating unimodal learning, it neglects
+the fact that parameter optimization in a unimodal encoder is influ-
+enced by both the multimodal joint learning objective and its indi-
+vidual unimodal learning objective. Thus, the key lies in balancing
+both the unimodal and multimodal learning objectives. However,
+the simple modeling of gradient interactions in two-dimensional
+spaces limited further implementations.
+Metric Geometry for Machine Learning. The learned repre-
+sentations in machine learning models typically reside in high-
+dimensional, non-uniform geometric structures, where traditional
+metrics (e.g., Euclidean distance) often fail to capture the true rela-
+tionships among data distributions. To better interpret these com-
+plex structures, a growing body of work has explored the use of
+metric geometry by embedding representations into structured geo-
+metric spaces. For instance, Wasserstein spaces provide a principled
+way to model the geometry of posterior distributions using Wasser-
+stein distance, enabling more expressive comparisons between prob-
+ability measures [15, 34]. Similarly, Riemannian manifolds allow
+high-dimensional data to be projected onto lower-dimensional non-
+linear manifolds, where geometric properties—such as angles and
+curvature—can be exploited to enhance the quality of feature embed-
+dings [6, 32, 35]. Furthermore, compared to flat Euclidean spaces,
+hyperbolic spaces—with their negative curvature—have demon-
+strated superior representational power, especially for hierarchical
+or imbalanced structures [14, 16, 30, 39]. Motivated by these in-
+sights, we adopt the lens of metric geometry in hyperspaces to
+better understand the “imbalance in multimodal learning”.
+3 Method
+3.1 Preliminaries
+Generally, the goal of multimodal learning is to train a model to
+predict the category labels using the multimodal input. Hence, two
+optimization objectives are introduced in the MML task:
+𝐿𝑘𝑖
+=
+𝑛
+Õ
+𝑖=1
+𝐶𝐸(𝑓𝑘𝑖
+(X𝑘𝑖
+),𝑦), 𝐿𝑚 = 𝐶𝐸(𝑓𝑚 (X𝑚),𝑦). (1)
+Where, 𝐶𝐸 refers to cross entropy loss, 𝑓𝑘𝑖
+and 𝑓𝑚 indicate the
+unimodal and multimodal classifiers, while 𝑋𝑘𝑖
+and 𝑋𝑚 stand for
+unimodal features and modal features after fusion. 𝑦 is the ground
+truth. The total loss of multimodal learning, which incorporates the
+multimodal optimization objective, is the summation of multimodal
+loss and unimodal loss:
+𝐿 =
+Õ
+𝑜 ∈{𝑘1,𝑘2,...,𝑚}
+𝐿𝑜 . (2)
+According to Wei et al. [40] and Yang et al. [43], the existence
+of unimodal optimizations can affect the multimodal learning op-
+timization for the model’s parameter update. The above two opti-
+mization processes can be represented as follows:
+𝜽𝑘𝑖 (𝑡+1) = 𝜽𝑘𝑖 (𝑡)−𝜂·
+1
+|𝑆|
+Õ
+𝑗 ∈𝑆
+∇𝜽𝑘𝑖 𝐿𝑜 (𝑓𝑜 (X𝑜𝑗 )), 𝑜 ∈ {𝑘𝑖,𝑚}. (3)
+Here, 𝑆 denotes mini-batch, 𝜂 is the learning rate, and 𝜽𝑘𝑖 repre-
+sents the encoder parameters corresponding to the 𝑖th modality.
+If the above two optimization objectives align with each other
+well, they can collectively facilitate the learning; on the other hand,
+if there are conflicts among them, the updating processes of param-
+eters will be disoriented.
+3.2 Multimodal Optimization in Hyperspace
+The multimodal learning with multimodal and unimodal optimiza-
+tion can be perceived as a multi-task like architecture, in which
+different learning objectives are simultaneously optimized[40]. Fur-
+thermore, the gradient of the joint loss function 𝐿𝑚 can be decom-
+posed into multiple gradients, each of which updates the parameters
+of the unimodal encoders, namely g𝑚𝑘1 , g𝑚𝑘2 , . . . , g𝑚𝑘𝑛 . And we
+use g𝑘𝑖 to denote the gradients from unimodal losses.
+In order to furtherly reveal the imbalanced multimodal learning
+during optimization, we put forward our first proposition.
+Proposition 3.1. During the multimodal training process, the geome-
+try that different optimization objectives constructed in the hyperspace
+can be viewed as a parallel polyhedron, which is shrinking during
+multimodal learning.
+Based on the property of the model initialization, in which param-
+eters are randomly initialized and follow the Gaussian distributions
+with zero mean at the early training stage, we use the chain rule to
+1339
+MM ’25, October 27–31, 2025, Dublin, Ireland Disen Hu et al.
+derive as below:
+E[g𝑜
+] = E[∇𝐿(𝜃)] = E[
+𝜕𝐿𝑜
+𝜕z1
+·
+𝜕z1
+𝜕𝜃
+] + E[
+𝜕𝐿𝑜
+𝜕z2
+·
+𝜕z2
+𝜕𝜃
+] + . . . , (4)
+in which 𝑜 ∈ {𝑘1, . . . ,𝑘𝑛,𝑚𝑘1
+, . . . ,𝑚𝑘𝑛
+}, and z1, z2, . . . are the inter-
+mediate variables; 𝜃 is the model’s initialized parameters following
+𝜃 ∼ N (0, 𝜎2). Since E[𝜃] ≈ 0, it is easy to know that E(g𝑜) ≈ 0,
+therefore we can formulate the below equation:
+E[𝑐𝑜𝑠(𝜑𝑖𝑗 )] = E[
+⟨g𝑘𝑖 , g
+𝑚𝑘𝑗 ⟩
+∥g𝑘𝑖 ∥∥g
+𝑚𝑘𝑗 ∥
+] 𝑗 = 1, . . . ,𝑛, (5)
+E[⟨g𝑘𝑖 , g
+𝑚𝑘𝑗 ⟩] = E[g𝑘𝑖 ] · E[g
+𝑚𝑘𝑗 ] ≈ 0, (6)
+𝜑𝑖𝑗 is the angle between the unimodal 𝑘𝑖’s gradient and the multi-
+modal gradient component. From Eq.5 and Eq.6, it is easy to derive
+the result: E[𝑐𝑜𝑠(𝜑𝑖𝑗 )] ≈ 0 and 𝜑𝑖𝑗 ≈ 90◦. In the left figure in
+Fig.3, it is easy to find that at early stages of training (e.g., Epoch
+10), gradients are more divergent (i.e., sparser), aligning with Eq.
+6. This indicates that at the early stage of the multimodal training,
+the gradients of each optimization objective are almost orthogonal,
+making their constructed geometry a regular parallel polyhedron.
+The rest of our analysis is from the perspective of unimodal 𝑘𝑖,
+we first define the gradient covariance matrix of unimodal gradient
+g𝑘𝑖 as follows:
+𝐶𝑖 = E[
+Õ
+𝜙1,𝜙2 ∈{𝑘𝑖,𝑚𝑘1,𝑚𝑘2,... }
+∇𝐿𝜙1
+(𝜃)∇𝐿𝜙2
+(𝜃)𝑇
+]. (7)
+Before we put forward our second proposition, we first illustrate
+the property of SGD optimizer [11] as below:
+g𝑜
+𝑁 (𝜃 (𝑡)) =
+1
+|𝑆|
+Õ
+𝑗 ∈𝑆
+∇𝜃 (𝑡)𝐿(𝑓𝑜 (𝑍𝑜𝑗 )) 𝑜 ∈ {𝑘𝑖,𝑚𝑘1
+, . . . }, (8)
+g𝑜
+𝑠 (𝜃 (𝑡)) ∼ N (g𝑜
+𝑁 (𝜃 (𝑡)),𝜖𝑡 ) 𝑜 ∈ {𝑘𝑖,𝑚𝑘1
+, . . . }, (9)
+in which 𝑁 indicates the number of training samples and g𝑜
+𝑠 is
+the final gradients computed by SGD optimizer using different
+optimization objectives. The above equations revealed the nature of
+the SGD optimization, unbiased estimations of full gradients, and
+its variance is brought by batch sampling.
+To prove our proposition, we interpret the optimization process
+from a geometric perspective. According to the Cauchy-Schwarz
+inequation, the upper boundary for the gradient covariance matrix
+can be formulated as:
+E[∇𝐿𝜙1
+(𝜃)∇𝐿𝜙2
+(𝜃)𝑇
+] ≤ E[∥∇𝐿𝜙1
+(𝜃)∥] · E[∥∇𝐿𝜙2
+(𝜃)∥]. (10)
+In which 𝜙1,𝜙2 ∈ {𝑘𝑖,𝑚𝑘1
+, . . . ,𝑚𝑘𝑛
+}.It is straightforward that dur-
+ing the training, the difference between the outputs and ground
+truth is minimizing, making the g𝑜
+𝑁 decrease. As a result, the ex-
+pectation E[g𝑜
+𝑠 ] = g𝑜
+𝑁 is decreasing during training as well.
+Moreover, according to Eq.5, the expectancies of cosine values
+are also minimizing, meaning the gradient vectors are progres-
+sively converging to a common space. Since the volume of the
+hyper-dimensional polyhedron depends on the length of the vec-
+tors magnitude and the angle between the vectors, that is to say,
+during the optimization, the volume of polyhedron constructed by
+gradient vectors is shrinking. As shown in the Fig. 3(a), at the early
+training stage (epoch 10), gradient distribution is scattered with rel-
+atively high covariance values, indicating large changes in gradient
+direction and imbalanced and unstable learning. On the other hand,
+as the training epoch increases, the gradient distribution becomes
+more concentrated, and their values covariance matrix gradually
+converge to relatively small range.
+Moreover, to fully understand how the imbalanced multimodal
+affects the gradients during training in the hyperspace, we put
+forward our second proposition.
+�1
+�3
+����
+�2
+����
+���
+(b) Gradients Polyhedron in Hyperspace
+(a) Gradients Distribution converge during training
+Figure 3: (a) The video encoder’s gradients distribution es-
+timation by computing the gradient covariance values. (b)
+The gradients constructed a polyhedron in the hyperspace
+in an imbalanced multimodal learning circumstance.
+Proposition 3.2. Imbalanced multimodal learning tends to result
+in larger values in the gradient covariance matrix compared to the
+balanced learning, with larger hyperspace polyhedron.
+We delve deeper into the gradient covariance matrix, and it can
+be approximated as:
+𝐶𝑖 = E[(g
+𝜙1
+𝑁 (𝜃 (𝑡)) + 𝜖
+𝜙1
+𝑡 )(g
+𝜙2
+𝑁 (𝜃 (𝑡)) + 𝜖
+𝜙2
+𝑡 )𝑇
+]. (11)
+In the above equation, the 𝜖𝑡 is often regarded as the normal distri-
+bution with a zero mean. And in the following equations, we use g
+as simplification for g(𝜃 (𝑡)).
+According to Eq.11, the equation can be transformed into:
+𝐶𝑖 = E[g
+𝜙1
+𝑁 g
+𝜙2𝑇
+𝑁 ] + E[g
+𝜙1
+𝑁 𝜖𝜙2𝑇
+] + E[𝜖𝜙1 g
+𝜙2𝑇
+𝑁 ] + E[𝜖𝜙1𝜖𝜙2𝑇
+]. (12)
+Based on the empirical validation, we observed that under imbal-
+anced scenarios, the noise from the imbalanced modality (e.g., 𝜙2)
+tends to diminish, while the noise from the dominant modality
+continues to grow. As imbalanced training continues, 𝜖𝜙2 is ap-
+proaching 0, which means the non-dominant modality falls into
+an inactive state during model training. At this time, Eq.12 would
+reduce to:
+𝐶𝑖 → E[g
+𝜙1
+𝑁 g
+𝜙2𝑇
+𝑁 ] + E[𝜖𝜙1 ]E[𝑔
+𝜙2
+𝑁 ], (13)
+Since E[𝜖𝜙1 ] is growing in imbalanced multimodal learning, while
+the expectation of each gradient is converging, the right part of
+Eq.13 is divergent. In contrast, under balanced training conditions,
+both the gradients and noise of each modality tend to converge and
+stabilize, resulting in smaller and tighter bounds than in the imbal-
+anced case. Based on such an intuitive assumption, Proposition 3.2
+can be established.
+3.3 Gradients Spanned Polyhedron Volume
+Based on the previous section, we propose that the gradient covari-
+ance matrix can indicate the alignment degree of the optimization
+1340
+Geometric Gradient Divergence Modulation for Imbalanced Multimodal Learning MM ’25, October 27–31, 2025, Dublin, Ireland
+objectives. According to Proposition 3.1, the gradients in hyper-
+space can formulate the parallel polyhedron, which is shrinking
+during the learning. Also, based on Proposition 3.2 and Eq.13, we
+can explain the imbalanced multimodal from the gradient noises
+(variance of the gradient estimate and the reflection of the degree
+of dispersion of the gradient distribution) and the gradient lengths,
+resulting in the larger upper boundary. As a result, to encourage a
+more compact and aligned distribution of gradients across modali-
+ties, we aim to reduce the spread of the covariance matrix. Instead
+of minimizing the entire matrix, we analyze it through its eigenval-
+ues. Specifically, the eigenvalues of the covariance matrix provide
+a direct measure of the variance along different directions in the
+gradient space. A large spread in eigenvalues indicates strong im-
+balance across modalities, while smaller and more uniform eigen-
+values reflect a more coherent and balanced optimization direc-
+tion. We define the eigenvalues of the covariance matrix 𝐶𝑖 as
+𝜆
+(1)
+𝑖 , 𝜆
+(2)
+𝑖 , . . . , 𝜆
+(𝑛+1)
+𝑖 . Notably, the determinant of the covariance
+matrix is equal to the product of these eigenvalues which geo-
+metrically corresponds to the squared volume of the polyhedron
+spanned by the gradients in hyperspace. This volume provides
+an interpretable proxy to quantify how dispersed or coherent the
+gradients are. Therefore, we formulate the following hypothesis:
+Hypothesis 3.1. The volume of the gradients polyhedron can reflect
+the disparity degree of gradients. By adjusting the volume, we can fur-
+therly minimize the covariance matrix and mitigate the imbalanced
+multimodal learning.
+As illustrated in Fig. 3(b), under imbalanced multimodal con-
+ditions, the gradients tend to exhibit both larger magnitudes and
+misaligned directions, resulting in a polyhedron with a larger vol-
+ume. This polyhedron geometrically captures all possible linear
+combinations of gradients from different optimization objectives,
+thereby providing a comprehensive representation of the feasi-
+ble gradient update space during training. Hence, a larger volume
+indicates greater disparity and instability in gradient directions,
+while a smaller volume implies better alignment and more balanced
+multimodal optimization.
+Supposing : G𝑖 = [g𝑘𝑖 , g𝑚𝑘1 , . . . , g𝑚𝑘𝑛 ]. is the gradient matrix
+constructed by i𝑡ℎ modality gradient and multimodal gradient com-
+ponents. In theory, the covariance matrix of multimodal gradients
+is defined as: C𝑖 = E[G𝑖G𝑇
+𝑖 ]. However, computing the full expecta-
+tion over the entire data distribution is intractable during training.
+Therefore, we employ an empirical estimation: Ĉ𝑖 = G𝑖G𝑇
+𝑖 . This
+approximation allows us to efficiently capture the interaction struc-
+ture between gradients, including alignment, magnitude disparity,
+providing a practical and informative geometric view of multimodal
+optimization dynamics.
+Since our goal is to quantify the overall expansion of the multi-
+modal gradients in the hyperspace, we compute the determinant of
+the empirical covariance matrix Ĉ𝑖, defined as:
+det(Ĉ𝑖) =
+𝑛+1
+Ö
+𝑝=1
+𝜆
+(𝑝)
+𝑖 , (14)
+where 𝜆
+(𝑝)
+𝑖 denotes the 𝑝-th eigenvalue of Ĉ𝑖. A larger determinant
+implies a greater dispersion of gradients across different directions
+in the space, while a smaller value indicates that gradients are more
+aligned and concentrated distributions.
+In the context of balanced multimodal learning, the goal is to en-
+courage alignment among gradients from different modalities. This
+corresponds to a contraction of the gradient vectors’ polyhedron,
+resulting in smaller eigenvalues and hence a smaller determinant.
+To further interpret this geometrically, we define the volume of
+the gradient polyhedron formed by the columns of G𝑖 as:
+𝑉𝑖 =
+q
+det(G𝑖G𝑇
+𝑖 ), (15)
+the above equation describes the volume of the polyhedron spanned
+by the gradients.
+Combining Eq. 14 and Eq. 15, we obtain:
+𝑉𝑖 ∝
+v
+u
+u
+t𝑛+1
+Ö
+𝑝=1
+𝜆
+(𝑝)
+𝑖 , (16)
+which highlights the direct relationship between the volume of
+the gradient’s polyhedron and the spectral characteristics of the
+covariance matrix.
+Therefore, by computing 𝑉𝑖, we not only quantify the alignment
+among modality gradients but also approximate the degree of imbal-
+ance during training. A smaller volume suggests better alignment
+and balance, while a larger volume reflects greater disparity. This
+validates our hypothesis that imbalance in multimodal optimization
+hinders convergence to a compact shared gradient space.
+3.4 Gradient modulation based on volume
+Based on the above analysis, the volume spanned by the gradi-
+ents from different optimization objectives provides a geometric
+indicator of the degree of imbalance between modalities during
+training. To this end, we leverage the determinant of the empirical
+covariance matrix to quantify this dispersion and guide gradient
+modulation. However, rather than computing the full covariance
+matrix Ĉ𝑖, which is computationally expensive in high-dimensional
+settings, we equivalently compute the matrix: C̃𝑖 = G𝑇
+𝑖 G𝑖.
+Remark 3.4.1 The covariance matrix Ĉ𝑖 and the C̃𝑖,have the same
+set of non-zero eigenvalues. Therefore, computing the determinant of
+C̃𝑖 provides an equivalent measure of gradient dispersion in the space
+spanned by G𝑖.
+Therefore, the G̃𝑖 can be formulated as:
+C̃𝑖 =
+©
+­
+­
+­
+­
+­
+«
+g𝑘𝑖 g𝑘𝑖 g𝑘𝑖 g𝑚𝑘1 . . . g𝑘𝑖 g𝑚𝑘𝑛
+g𝑘𝑖 g𝑚𝑘1 g𝑚𝑘1 g𝑚𝑘1 . . . g𝑚𝑘1 g𝑚𝑘𝑛
+.
+.
+.
+.
+.
+.
+...
+.
+.
+.
+g𝑚𝑘𝑛 g𝑘𝑖 . . . . . . g𝑚𝑘𝑛 g𝑚𝑘𝑛
+ª
+®
+®
+®
+®
+®
+¬
+, (17)
+and we can calculate the rest of the modalities in the same way. We
+can calculate the volume of each modality 𝑉𝑖,𝑖 = 1 . . . , 𝑁, using
+determinant of C̃𝑖.
+Moreover, based on the calculated volume, we can acquire the
+imbalanced ratio of modality 𝑘𝑖 through the following equation:
+𝜌𝑖 =
+𝑉𝑖
+Í𝑁
+𝑘=1
+𝑉𝑘
+, (18)
+the 𝜌𝑖 is the indicator of the imbalanced ratio of modality 𝑖.
+1341
+MM ’25, October 27–31, 2025, Dublin, Ireland Disen Hu et al.
+Table 1: Comparison with state-of-the-art methods on Kinetics Sounds, CREMA-D and AVE. The metric is the top-1 accuracy (%)
+of multimodal and unimodal performances. The best performances are highlighted in bold. The underlining symbol denotes
+the second-best performances. Avg represents the average accuracy of multimodal and unimodal accuracies.
+Method
+Kinetics Sounds CREMA-D AVE
+Accm Acca Accv Avg Accm Acca Accv Avg Accm Acca Accv Avg
+Audio-only - 54.12 - - - 65.59 - - - 66.42 - -
+Video-only - - 49.20 - - - 78.49 - - - 46.02 -
+Joint training 64.61 52.03 35.47 50.70 70.83 61.96 38.58 57.12 69.65 63.93 24.63 52.74
+Uniform baseline 68.31 53.20 40.55 54.02 78.23 65.41 75.66 73.10 73.57 63.34 40.15 59.02
+MSLR (ACL’22) 65.91 50.92 42.30 53.04 71.51 63.04 41.13 58.56 68.91 61.19 24.63 51.58
+G-Blending (CVPR’20) 68.90 52.11 41.35 54.12 73.41 62.42 65.37 67.07 71.80 60.64 39.51 57.32
+OGM-GE (CVPR’22) 66.79 51.09 37.86 51.91 71.14 61.29 39.27 57.23 69.12 62.45 27.39 52.99
+Greedy (ICML’22) 65.32 50.58 35.97 50.62 69.31 62.49 38.23 56.68 69.66 60.76 38.70 56.37
+PMR (CVPR’23) 65.70 52.47 34.52 50.90 75.54 63.04 71.24 69.27 70.89 63.18 35.57 56.55
+AGM (ICCV’23) 66.17 51.31 34.83 50.77 77.86 63.34 37.54 59.58 71.04 62.44 40.96 58.15
+ReconBoost (ICML’24) 70.85 56.23 50.27 59.12 79.82 60.23 73.01 71.02 71.35 61.20 39.06 57.20
+MMPareto (ICML’24) 70.13 56.40 53.05 59.86 78.53 67.38 70.26 72.06 75.81 64.34 45.39 61.85
+DI-MML (MM’24) 74.28 59.53 57.29 63.70 83.74 66.67 78.90 76.44 75.37 64.18 49.25 62.93
+LFM (NIPS’24) 72.53 57.98 56.43 62.31 86.02 66.53 75.27 75.94 68.58 64.35 44.89 59.27
+GGDM (Ours) 75.92 61.41 59.01 65.45 87.10 66.83 79.97 77.97 77.10 66.34 46.64 63.36
+To further align the different optimization objectives during
+training, we adaptively modulate via:
+𝛼𝑖 = 1 − 𝑡𝑎𝑛ℎ(𝑟𝑒𝑙𝑢(𝜌𝑖)). (19)
+In order to force the volumes to shrink in the hyper spaces to reduce
+the imbalanced modality, we use the gradient modulation method
+to restrict the distribution of updating directions of the joint and
+unimodal objectives.
+h
+𝑓
+𝑖 = ∥𝛼𝑖 (g𝑘𝑖 + g𝑚𝑘𝑖 )∥. (20)
+And the parameter updating processes with modulated gradient is:
+𝜽
+(𝑡+1)
+𝑘𝑖
+= 𝜽
+(𝑡)
+𝑘𝑖
+− 𝜂 · h
+𝑓
+𝑖 (21)
+4 Experiments
+4.1 Datasets and Implementation Details
+Datasets. We leveraged our methods on five multimodal datasets
+to demonstrate its effectiveness, i.e., CREMA-D [4], AVE [36], Ki-
+neticsSounds [1], Twitter2017 [45], and UCF101 [33]. The former
+three datasets are audio-visual datasets. Specifically, CREMA-D
+contains 7,442 video clips; AVE consists of 4,143 10-second videos;
+Kinetics Sounds [26] encompasses 19,000 video clips categorized in
+31 categories. Moreover, Twitter2017, a dataset consisting of image
+and text modalities, has three emotion labels: positive, negative, and
+neutral. Lastly, the UCF101 [33] dataset, comprising 13,320 videos,
+with 9,537 for training and 3,783 for testing, aims to predict human
+motions using different modalities.
+Implementation Details. In our experiments, we followed the for-
+mer research on imbalanced multimodal learning using ResNet18
+[20] as the foundational architecture to process both visual and
+acoustic modalities. Concretely, for audio-visual datasets, the acous-
+tic modality is transformed into 257 × 1004 spectrograms, and we
+randomly sample multiple frames from 10-frame video clips. On
+the other hand, for Twitter2017, the text-image dataset, we incor-
+porate ResNet50 for image feature extraction and BERT [7] for text
+processing. While for the modalities in UCF101, we also leveraged
+ResNet18 to extract the features from the raw data. Optimizers of
+audio-visual datasets are stochastic gradient descent (SGD) with
+momentum of 0.9 and weight decay parameter of 1𝑒−1, and we set
+the initial learning rate as 1𝑒−2 with batch size of 64, progressively
+reducing it by a factor of ten upon observing a plateau in loss re-
+duction. Finally, for the UCF101 dataset, we implemented tv-l1 to
+extract Optical Flow from the RGB images. And for the text-image
+dataset, we implement Adam optimizer with a learning rate of 1𝑒−4.
+All the datasets are trained with 150 epochs.
+4.2 Comparison with SOTA IML Methods
+We compared GGDM with other state-of-the-art methods. Accord-
+ing to Table.1, Audio-only and Video-only are unimodal models
+trained individually, while joint training denotes the method that
+only uses multimodal joint loss. A uniform baseline is the method
+in which multimodal and unimodal losses are summed equally.
+Moreover, the other IML methods are also compared, including
+MSLR [44], G-Blending [38], OGM-GE [31], Greedy [41], PMR [13],
+AGM [28], Reconboots [21], MMPareto [40], LFM [43], DI-MML
+[12]. From the table, it is easy to observe that on all three audio-
+visual datasets, our proposed method can surpass the other coun-
+terparts around 1%-2% on both multimodal accuracy and unimodal
+accuracy. Specifically, compared to methods with mere unimodal
+modulation, those that incorporate the joint training objectives can
+surpass them with large improvements (around 4 %- 6 %), which
+indicate the important role of the multimodal training object in
+solving the imbalanced modality problem. Also, compared to meth-
+ods that optimize multimodal and unimodal learning objectives
+1342
+Geometric Gradient Divergence Modulation for Imbalanced Multimodal Learning MM ’25, October 27–31, 2025, Dublin, Ireland
+(ReconBoost, MMPareto, and LFM), our method significantly sur-
+passes them with the enhancement of around 2%, which indicates
+that our constructed metric geometry not only theoretically reveals
+the interactions of the above two training objectives but also empir-
+ically proves its superiority in addressing imbalanced multimodal.
+Furthermore, compared to methods with asynchronous training,
+such as DI-MML, our method also shows outstanding results.
+Table 2: Comparison with state-of-the-art method on Twit-
+ter2017 and UCF101.
+Method
+UCF101 Twitter2017
+Accm F1 Accm F1
+OGM-GE (CVPR’22) 53.56 51.72 42.92 32.74
+ReconBoost (ICML’24) 64.37 63.17 49.42 42.34
+MMPareto (ICML’24) 64.48 63.84 47.73 37.28
+DI-MML (MM’24) 65.79 64.86 53.83 46.11
+LFM (NIPS’24) 63.68 62.59 53.08 45.83
+GGDM (Ours) 67.10 65.73 56.89 47.57
+4.3 Generalizability on More Modalities
+We also conduct extensive experiments on two widely used multi-
+modal datasets, i.e, Twitter2017 and UCF101. Compared to methods
+that concentrate on optimizing unimodal learning objectives, i.e.,
+OGM-GE, our model can surpass them with around 15 % on both
+accuracy and F1 score, indicating the effectiveness of introducing
+multimodal learning objectives in the learning process. Additionally,
+our method outperforms the other counterparts on both multimodal
+accuracy and F1 score on both datasets with the improvement of
+1.5 %, respectively, compared to the methods that optimize both
+multimodal and unimodal learning objectives.
+KS CREMA-D AVE
+55
+60
+65
+70
+75
+80
+85
+90
+95
+MAP
+(%)
+w/o GM
+LFM (NIPS'24)
+GGDM (ours)
+KS CREMA-D AVE
+60
+65
+70
+75
+80
+85
+90
+F1
+(%)
+w/o GM
+LFM (NIPS'24)
+GGDM (Ours)
+Figure 4: The comparison with uniform baseline and LFM
+using mAP and F1.
+4.4 Further Analysis
+Analysis on Multi-label Classification Metrics. In order to give
+a more comprehensive understanding of our proposed method’s
+effectiveness, we visualized our GGDM’s performance using met-
+rics of mAP and F1. As shown in Fig. 4, on all three datasets, our
+method’s mAP and F1 achieve the best performance. In detail, the
+mAP of our method reaches around 90 %, indicating a strong abil-
+ity in differentiating all classes. Also, our method surpasses the
+uniform baseline on all the datasets with 9 % improvement, and
+compared to LFM, our method continues to gain better performance
+t-SNE Audio - MMPareto t-SNE Video - MMPareto
+t-SNE Audio - GGDM t-SNE Video - GGDM
+Figure 5: T-SNE visualization [37] on CREMA-D dataset. In
+which “□” denotes the video, while “◦” denotes the audio.
+Different classes are assigned different colors.
+(around 3 %). This visualization proves that our proposed gradi-
+ent volumes make the optimization more stable and reduce the
+imbalance between different classes. Additionally, our proposed
+gradient modulation benefits the multimodal training in reduced
+optimization oscillation, allowing the model to learn low-frequency
+categories more effectively and improve overall generalization abil-
+ity. This visualization is strong proof that our method possesses
+stable and robust performance in multi-label classification tasks.
+Tsne-visualization. In Fig. 5, we visualized the t-SNE [37] features
+of both visual and acoustic features on CREMAD dataset. It is clear
+to see that although the acoustic features of MMPareto can be
+distinguished, the features are still less compact, and some of the
+classes are mixed with others. This phenomenon is more evident in
+the visual features of MMPareto, most of the features, e.g., blue, light
+green, and orange, are mixed with each other, making it hard for the
+model to make correct classification. On the contrary, our GGDM
+method can effectively balance the conflicts between multimodal
+and unimodal learning objectives, extracting the useful signals from
+each modality. To be more specific, our acoustic features are more
+compact and clustered compared to MMPareto’s acoustic features.
+Imbalance Degree Analysis. We monitor the change of visual
+gradient volume during training on CREMA-D and Kinetics Sounds
+datasets, shown in Fig. 6. In this experiment, we use MMPareto and
+uniform baseline (with no gradient modulation) as our counterparts,
+and it is obvious to see that during training, the visual gradient
+volume of the baseline fluctuates significantly with high volumes,
+indicating the misalignment of multimodal and unimodal gradient
+update directions. Such misalignment will hinder both learning
+objectives from updating towards the optimal intensities and direc-
+tions. The MMPareto, on the other hand, can reduce the gradient
+volume during the training. And compared to the baseline’s imbal-
+ance ratios at the final training stage, they decrease significantly
+1343
+MM ’25, October 27–31, 2025, Dublin, Ireland Disen Hu et al.
+20 40 60 80 100 120 140
+Training Epoch
+0
+10
+20
+30
+40
+50
+Volume_v
+w/o GM
+MMPareto(ICML'24)
+GGDM(Ours)
+20 40 60 80 100 120 140
+Training Epoch
+0
+10
+20
+30
+40
+50
+Volume_v
+w/o GM
+MMPareto(ICML'24)
+GGDM (Ours)
+Figure 6: Visual gradient volume change on CREMA-D
+(left) and Kinetics Sounds (right) datasets in training.
+Accuracy F1
+69.5
+70.9
+74.4
+68.4
+67.0 72.1
+AVE 32 AVE 16
+77.1
+71.1
+75.0
+63.8
+66.9 61.2
+71.1
+73.3
+KS 32
+.9
+KS 64
+75
+KS 128
+64.3
+60.2
+AVE 8
+69.6
+73.6 75.4
+65.8
+73.2
+71.2
+74.1
+AVE 32 AVE 16
+KS 32
+KS 64 KS 128
+AVE 8
+73.6
+69.3
+68.0
+70.1
+60.6 64.6
+62.3
+71.1
+70.2
+69.3
+72.7
+71.3
+66.5 69.2
+69.6
+72.6 68.8 60.5
+63.0
+59.0
+62.5
+70.6
+73.9
+75.8
+One Joint Uniform Baseline DI-MML (MM'24) GGDM(Ours)
+Figure 7: Comparison results with different batch sizes. Our
+method consistently outperforms other method.
+and fluctuate in small ranges, especially on the CREMA-D dataset,
+indicating that the imbalanced phenomenon is alleviated and train-
+ing is more stable. This means that if the multimodal learning is
+more balanced, the gradients’ polyhedron volume is concentrated
+and small. On the contrary, our proposed GGDM method’s visual
+gradient volumes consistently stay in lower values on two datasets
+during training, meaning the well-alignment of multimodal and
+unimodal objectives. Moreover, such alignment can facilitate the
+two training objectives to optimize their updating processes, di-
+minishing the potential conflicts between them. With lower visual
+gradient volumes, GGDM can reach better visual performance and
+multimodal performance, explicitly revealing the conflicts of the
+gradient and diminishing the imbalanced multimodal phenomenon.
+Table 3: Performances with adaptive optimizers on Kinetics
+Sounds and CREMA-D datasets.
+Dataset Optimizer Accm Acca Accv
+CREMA-D
+SGD [3] 71.10 63.44 51.35
+SGD+Ours 87.10 66.83 79.97
+Adam [27] 82.66 62.50 74.60
+Adam+Ours 84.68 66.13 76.34
+AdaGrad [10] 61.29 54.57 26.88
+AdaGrad+Ours 64.11 58.87 29.97
+Kinetics Sounds
+SGD [3] 68.31 53.20 40.15
+SGD+Ours 75.92 61.41 59.01
+Adam [27] 73.22 53.48 59.24
+Adam+Ours 78.38 61.78 64.85
+AdaGrad [10] 57.29 47.34 29.84
+AdaGrad+Ours 64.92 52.51 36.80
+Robustness Analysis. Following [40, 43], we utilized the SGD
+optimizer during the training. We continue to explore the effec-
+tiveness and robustness of our proposed method on other widely
+used optimizers, i.e., Adam [27] and AdaGrad [10]. The results are
+shown in the Table 3, we used a uniform baseline as our coun-
+terparts. It is clear that with different optimizers, our proposed
+model consistently enhanced the model performance by reducing
+the imbalanced modality issues. Specifically, there are significant
+improvements (around 8%) when the SGD is leveraged. Moreover,
+with other optimizers, our method is still better than the uniform
+baseline, enhancing around 2% on both multimodal accuracy and
+unimodal accuracy. Our method helps the distribution of gradients
+to be optimized to make the optimization path more stable. It also
+indicates that our GGDM can prevent the optimization from falling
+into local minima. The experiments exhibit our method’s generaliz-
+ability using different optimizers and effectiveness in optimization.
+Robustness on Batch Size. Since the utilized SGD optimizer up-
+dates the model’s parameters based on the gradient estimation of
+each mini-batch, the selection of different sizes of batch can signifi-
+cantly affect the final performance. In order to exhibit our method’s
+robustness when facing different batches with various gradient
+variances, we visualize the method’s performance with different
+batches in Fig. 7. We demonstrated the results with different batches
+on Kinetics Sounds and AVE. It is clear that on all datasets with
+various batch sizes, our method consistently outperforms other
+methods. The left radar figure is the accuracy performance, and the
+right figure is the F1 performance. The batch size ranges from 8 to
+16 on AVE dataset and 32 to 128 on Kinetics Sounds dataset. The
+steadiness across various datasets with different batches indicates
+that GGDM does not depend on a specific batch size.
+5 Conclusion
+In conclusion, we first provided a novel geometric perspective
+to reveal the optimization processes in multimodal learning and
+imbalanced multimodal phenomenon. With solid mathematical de-
+duction, we successfully explained the interactions of unimodal and
+multimodal optimization objectives in the hyperspaces, in which
+they collectively formulate the parallel polyhedron. Moreover, we
+introduced the volume of the constructed polyhedron to reflect
+the disparity degree between those two optimization objectives.
+And used it to modulate the unimodal and multimodal gradients to
+force them to align to avoid the imbalance phenomenon. At last,
+we tested our method on five widely used multimodal datasets to
+exhibit the effectiveness and robustness of our proposed method
+and reached state-of-the-art performance. For future work, we shall
+extend our method to scenarios close to real-world applications.
+6 Acknowledgments
+This work was supported in part by the National Natural Science
+Foundation of China under Grants No. 62222203 and No. 62476201
+and Meituan.
+1344
+Geometric Gradient Divergence Modulation for Imbalanced Multimodal Learning MM ’25, October 27–31, 2025, Dublin, Ireland
+References
+[1] Relja Arandjelovic and Andrew Zisserman. 2017. Look, listen and learn. In
+Proceedings of the IEEE international conference on computer vision. 609–617.
+[2] Tadas Baltrušaitis, Chaitanya Ahuja, and Louis-Philippe Morency. 2018. Multi-
+modal machine learning: A survey and taxonomy. IEEE transactions on pattern
+analysis and machine intelligence 41, 2 (2018), 423–443.
+[3] Léon Bottou. 2012. Stochastic gradient descent tricks. In Neural Networks: Tricks
+of the Trade: Second Edition. 421–436.
+[4] Houwei Cao, David G Cooper, Michael K Keutmann, Ruben C Gur, Ani Nenkova,
+and Ragini Verma. 2014. Crema-d: Crowd-sourced emotional multimodal actors
+dataset. IEEE transactions on affective computing 5, 4 (2014), 377–390.
+[5] Zhiguo Chen, Xun Jiang, Xing Xu, Zuo Cao, Yijun Mo, and Heng Tao Shen.
+2023. Joint searching and grounding: Multi-granularity video content retrieval.
+In Proceedings of the 31st ACM International Conference on Multimedia. 975–983.
+[6] Calin Cruceru, Gary Bécigneul, and Octavian-Eugen Ganea. 2021. Computation-
+ally tractable riemannian manifolds for graph embeddings. In Proceedings of the
+AAAI Conference on Artificial Intelligence, Vol. 35. 7133–7141.
+[7] Jacob Devlin, Ming-Wei Chang, Kenton Lee, and Kristina Toutanova. 2019. Bert:
+Pre-training of deep bidirectional transformers for language understanding. In
+Proceedings of the 2019 conference of the North American chapter of the association
+for computational linguistics: human language technologies, volume 1 (long and
+short papers). 4171–4186.
+[8] Chenzhuang Du, Jiaye Teng, Tingle Li, Yichen Liu, Yue Wang, Yang Yuan, and
+Hang Zhao. 2021. Modality Laziness: Everybody’s Business is Nobody’s Business.
+(2021).
+[9] Chenzhuang Du, Jiaye Teng, Tingle Li, Yichen Liu, Tianyuan Yuan, Yue Wang,
+Yang Yuan, and Hang Zhao. 2023. On uni-modal feature learning in supervised
+multi-modal learning. In International Conference on Machine Learning. 8632–
+8656.
+[10] John Duchi, Elad Hazan, and Yoram Singer. 2011. Adaptive subgradient methods
+for online learning and stochastic optimization. Journal of machine learning
+research 12, 7 (2011).
+[11] Caoyun Fan, Wenqing Chen, Jidong Tian, Yitian Li, Hao He, and Yaohui Jin. 2022.
+Maxgnr: A dynamic weight strategy via maximizing gradient-to-noise ratio for
+multi-task learning. In Proceedings of the Asian Conference on Computer Vision.
+1178–1193.
+[12] Yunfeng Fan, Wenchao Xu, Haozhao Wang, Junhong Liu, and Song Guo. 2024.
+Detached and interactive multimodal learning. In Proceedings of the 32nd ACM
+International Conference on Multimedia. 5470–5478.
+[13] Yunfeng Fan, Wenchao Xu, Haozhao Wang, Junxiao Wang, and Song Guo. 2023.
+Pmr: Prototypical modal rebalance for multimodal learning. In Proceedings of the
+IEEE/CVF Conference on Computer Vision and Pattern Recognition. 20029–20038.
+[14] Pengfei Fang, Mehrtash Harandi, and Lars Petersson. 2021. Kernel methods in
+hyperbolic spaces. In Proceedings of the IEEE/CVF International Conference on
+Computer Vision. 10665–10674.
+[15] Dror Freirich, Tomer Michaeli, and Ron Meir. 2021. A theory of the distortion-
+perception tradeoff in wasserstein space. Advances in Neural Information Process-
+ing Systems 34 (2021), 25661–25672.
+[16] Octavian Ganea, Gary Bécigneul, and Thomas Hofmann. 2018. Hyperbolic neural
+networks. Advances in neural information processing systems 31 (2018).
+[17] Zixian Gao, Disen Hu, Xun Jiang, Huimin Lu, Heng Tao Shen, and Xing Xu. 2024.
+Enhanced Experts with Uncertainty-Aware Routing for Multimodal Sentiment
+Analysis. In Proceedings of the 32nd ACM International Conference on Multimedia.
+9650–9659.
+[18] Zixian Gao, Xun Jiang, Xing Xu, Fumin Shen, Yujie Li, and Heng Tao Shen. 2024.
+Embracing Unimodal Aleatoric Uncertainty for Robust Multimodal Fusion. In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition.
+26876–26885.
+[19] Zirun Guo, Tao Jin, Jingyuan Chen, and Zhou Zhao. 2024. Classifier-guided
+gradient modulation for enhanced multimodal learning. Advances in Neural
+Information Processing Systems 37 (2024), 133328–133344.
+[20] Kaiming He, Xiangyu Zhang, Shaoqing Ren, and Jian Sun. 2016. Deep residual
+learning for image recognition. In Proceedings of the IEEE conference on computer
+vision and pattern recognition. 770–778.
+[21] Cong Hua, Qianqian Xu, Shilong Bao, Zhiyong Yang, and Qingming Huang.
+2024. Reconboost: Boosting can achieve modality reconcilement. arXiv preprint
+arXiv:2405.09321 (2024).
+[22] Yu Huang, Junyang Lin, Chang Zhou, Hongxia Yang, and Longbo Huang. 2022.
+Modality competition: What makes joint training of multi-modal network fail
+in deep learning?(provably). In International conference on machine learning.
+9226–9259.
+[23] Xun Jiang, Xing Xu, Zhiguo Chen, Jingran Zhang, Jingkuan Song, Fumin Shen,
+Huimin Lu, and Heng Tao Shen. 2022. Dhhn: Dual hierarchical hybrid network
+for weakly-supervised audio-visual video parsing. In Proceedings of the 30th ACM
+International Conference on Multimedia. 719–727.
+[24] Xun Jiang, Xing Xu, Huimin Lu, Lianghua He, and Heng Tao Shen. 2024. Joint
+objective and subjective fuzziness denoising for multimodal sentiment analysis.
+IEEE Transactions on Fuzzy Systems 33, 1 (2024), 15–27.
+[25] Xun Jiang, Xing Xu, Zailei Zhou, Yang Yang, Fumin Shen, and Heng Tao Shen.
+2024. Zero-shot video moment retrieval with angular reconstructive text embed-
+dings. IEEE Transactions on Multimedia (2024).
+[26] Will Kay, Joao Carreira, Karen Simonyan, Brian Zhang, Chloe Hillier, Sudheendra
+Vijayanarasimhan, Fabio Viola, Tim Green, Trevor Back, Paul Natsev, et al. 2017.
+The kinetics human action video dataset. arXiv preprint arXiv:1705.06950 (2017).
+[27] Diederik P Kingma. 2014. Adam: A method for stochastic optimization. arXiv
+preprint arXiv:1412.6980 (2014).
+[28] Hong Li, Xingyu Li, Pengbo Hu, Yinuo Lei, Chunxiao Li, and Yi Zhou. 2023.
+Boosting multi-modal model performance with adaptive gradient modulation. In
+Proceedings of the IEEE/CVF International Conference on Computer Vision. 22214–
+22224.
+[29] Yi-Ming Lin, Yuan Gao, Mao-Guo Gong, Si-Jia Zhang, Yuan-Qiao Zhang, and
+Zhi-Yuan Li. 2023. Federated learning on multimodal data: A comprehensive
+survey. Machine Intelligence Research 20, 4 (2023), 539–553.
+[30] Alessandro Muscoloni, Josephine Maria Thomas, Sara Ciucci, Ginestra Bianconi,
+and Carlo Vittorio Cannistraci. 2017. Machine learning meets complex networks
+via coalescent embedding in the hyperbolic space. Nature communications 8, 1
+(2017), 1615.
+[31] Xiaokang Peng, Yake Wei, Andong Deng, Dong Wang, and Di Hu. 2022. Balanced
+multimodal learning via on-the-fly gradient modulation. In Proceedings of the
+IEEE/CVF conference on computer vision and pattern recognition. 8238–8247.
+[32] Aaron Sim, Maciej L Wiatrak, Angus Brayne, Páidí Creed, and Saee Paliwal. 2021.
+Directed graph embeddings in pseudo-riemannian manifolds. In International
+Conference on Machine Learning. PMLR, 9681–9690.
+[33] Khurram Soomro, Amir Roshan Zamir, and Mubarak Shah. 2012. UCF101: A
+dataset of 101 human actions classes from videos in the wild. arXiv preprint
+arXiv:1212.0402 (2012).
+[34] Sanvesh Srivastava, Cheng Li, and David B Dunson. 2018. Scalable Bayes via
+barycenter in Wasserstein space. Journal of Machine Learning Research 19, 8
+(2018), 1–35.
+[35] Li Sun, Zhenhao Huang, Zixi Wang, Feiyang Wang, Hao Peng, and Philip S Yu.
+2024. Motif-aware riemannian graph neural network with generative-contrastive
+learning. In Proceedings of the AAAI Conference on Artificial Intelligence, Vol. 38.
+9044–9052.
+[36] Yapeng Tian, Jing Shi, Bochen Li, Zhiyao Duan, and Chenliang Xu. 2018. Audio-
+visual event localization in unconstrained videos. In Proceedings of the European
+conference on computer vision. 247–263.
+[37] Laurens Van der Maaten and Geoffrey Hinton. 2008. Visualizing data using t-SNE.
+Journal of machine learning research 9, 11 (2008).
+[38] Weiyao Wang, Du Tran, and Matt Feiszli. 2020. What makes training multi-
+modal classification networks hard?. In Proceedings of the IEEE/CVF conference on
+computer vision and pattern recognition. 12695–12705.
+[39] Melanie Weber, Manzil Zaheer, Ankit Singh Rawat, Aditya K Menon, and Sanjiv
+Kumar. 2020. Robust large-margin learning in hyperbolic space. Advances in
+Neural Information Processing Systems 33 (2020), 17863–17873.
+[40] Yake Wei and Di Hu. 2024. Mmpareto: boosting multimodal learning with
+innocent unimodal assistance. arXiv preprint arXiv:2405.17730 (2024).
+[41] Nan Wu, Stanislaw Jastrzebski, Kyunghyun Cho, and Krzysztof J Geras. 2022.
+Characterizing and overcoming the greedy nature of learning in multi-modal deep
+neural networks. In International Conference on Machine Learning. 24043–24055.
+[42] Xing Xu, Tan Wang, Yang Yang, Lin Zuo, Fumin Shen, and Heng Tao Shen. 2020.
+Cross-modal attention with semantic consistence for image–text matching. IEEE
+transactions on neural networks and learning systems 31, 12 (2020), 5412–5425.
+[43] Yang Yang, Fengqiang Wan, Qing-Yuan Jiang, and Yi Xu. 2024. Facilitating
+multimodal classification via dynamically learning modality gap. Advances in
+Neural Information Processing Systems 37 (2024), 62108–62122.
+[44] Yiqun Yao and Rada Mihalcea. 2022. Modality-specific learning rates for effective
+multimodal additive late-fusion. In Findings of the Association for Computational
+Linguistics 2022. 1824–1834.
+[45] Jianfei Yu and Jing Jiang. 2019. Adapting BERT for target-oriented multimodal
+sentiment classification. International Joint Conference on Artificial Intelligence.
+1345
+

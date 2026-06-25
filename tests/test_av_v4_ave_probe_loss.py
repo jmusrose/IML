@@ -144,7 +144,7 @@ def test_av_v4_ave_cli_accepts_independent_probe_loss_weights():
         ]
     )
 
-    assert defaults.audio_loss_weight == 5.0
+    assert defaults.audio_loss_weight == 1.0
     assert defaults.visual_loss_weight == 5.0
     assert explicit.audio_loss_weight == 1.0
     assert explicit.visual_loss_weight == 3.0

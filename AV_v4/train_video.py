@@ -7,8 +7,8 @@ from pathlib import Path
 if __package__ is None or __package__ == "":
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from AV_v3 import train_cremad, train_ks, train_ave
-from AV_v3.datasets import load_ks_classes
+from AV_v4 import train_cremad, train_ks, train_ave
+from AV_v4.datasets import load_ks_classes
 
 
 def build_dataset_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -22,6 +22,8 @@ def build_dataset_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--lr", type=float, default=0.02)
     parser.add_argument("--momentum", type=float, default=0.9)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
+    parser.add_argument("--audio-loss-weight", type=float, default=None)
+    parser.add_argument("--visual-loss-weight", type=float, default=None)
     parser.add_argument("--image-size", type=int, default=224)
     parser.add_argument("--audio-duration", type=float, default=None)
     parser.add_argument("--n-fft", type=int, default=None)
@@ -50,6 +52,8 @@ def build_dataset_args(argv: list[str] | None = None) -> argparse.Namespace:
     args = parser.parse_args(argv)
 
     if args.dataset == "cremad":
+        args.audio_loss_weight = 1.0 if args.audio_loss_weight is None else args.audio_loss_weight
+        args.visual_loss_weight = 1.0 if args.visual_loss_weight is None else args.visual_loss_weight
         args.data_root = args.data_root or "dataset/CREMA-D"
         args.output_dir = args.output_dir or "runs/video_cremad"
         args.num_classes = 6
@@ -60,6 +64,8 @@ def build_dataset_args(argv: list[str] | None = None) -> argparse.Namespace:
         args.use_video_frames = 1 if args.use_video_frames is None else args.use_video_frames
         args.fps = args.use_video_frames
     elif args.dataset == "ks":
+        args.audio_loss_weight = 1.0 if args.audio_loss_weight is None else args.audio_loss_weight
+        args.visual_loss_weight = 1.0 if args.visual_loss_weight is None else args.visual_loss_weight
         args.data_root = args.data_root or "dataset/kinect_sound"
         args.output_dir = args.output_dir or "runs/video_ks"
         args.num_classes = len(load_ks_classes(args.class_file))
@@ -69,6 +75,8 @@ def build_dataset_args(argv: list[str] | None = None) -> argparse.Namespace:
         args.win_length = 256 if args.win_length is None else args.win_length
         args.use_video_frames = 3 if args.use_video_frames is None else args.use_video_frames
     else:  # ave
+        args.audio_loss_weight = 1.0 if args.audio_loss_weight is None else args.audio_loss_weight
+        args.visual_loss_weight = 5.0 if args.visual_loss_weight is None else args.visual_loss_weight
         args.data_root = args.data_root or "dataset/AVE"
         args.output_dir = args.output_dir or "runs/video_ave"
         args.num_classes = 28

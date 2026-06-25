@@ -26,14 +26,14 @@ from cmi_fgm import (
     register_feature_gradient_hooks,
     register_split_linear_weight_hook,
 )
-from AV_v3.datasets import (
+from AV_v4.datasets import (
     CREMADAVDataset,
     CREMADTrainImageTransform,
     ResizeToTensorNormalize,
     discover_cremad_samples,
     split_samples_from_csv,
 )
-from AV_v3.models import AVBaseline, AudioBaseline, VisualBaseline
+from AV_v4.models import AVBaseline, AudioBaseline, VisualBaseline
 
 
 VISUAL_AUGMENTATION_PRESETS = {
@@ -231,6 +231,8 @@ def forward_and_losses(
     modality: str,
     criterion: nn.Module,
     fgm_state: CMIFGMState | None = None,
+    audio_loss_weight: float = 1.0,
+    visual_loss_weight: float = 1.0,
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor], list[torch.utils.hooks.RemovableHandle]]:
     handles: list[torch.utils.hooks.RemovableHandle] = []
     if modality == "av" and hasattr(model, "forward_with_modal_logits"):
@@ -246,7 +248,11 @@ def forward_and_losses(
         audio_loss = audio_per_sample.mean()
         visual_loss = visual_per_sample.mean()
         losses = {
-            "loss": fusion_loss + audio_loss + visual_loss,
+            "loss": (
+                fusion_loss
+                + audio_loss_weight * audio_loss
+                + visual_loss_weight * visual_loss
+            ),
             "fusion_loss": fusion_loss,
             "audio_loss": audio_loss,
             "visual_loss": visual_loss,
@@ -337,6 +343,8 @@ def train_one_epoch(
     epoch: int | None = None,
     show_progress: bool = False,
     fgm_state: CMIFGMState | None = None,
+    audio_loss_weight: float = 1.0,
+    visual_loss_weight: float = 1.0,
 ) -> dict[str, float]:
     model.train()
     criterion = nn.CrossEntropyLoss(reduction="none")
@@ -362,6 +370,8 @@ def train_one_epoch(
             modality,
             criterion,
             fgm_state=fgm_state,
+            audio_loss_weight=audio_loss_weight,
+            visual_loss_weight=visual_loss_weight,
         )
         loss = losses["loss"]
         loss.backward()
@@ -400,6 +410,8 @@ def evaluate(
     epoch: int | None = None,
     split_name: str = "eval",
     show_progress: bool = False,
+    audio_loss_weight: float = 1.0,
+    visual_loss_weight: float = 1.0,
 ) -> dict[str, float]:
     model.eval()
     criterion = nn.CrossEntropyLoss(reduction="none")
@@ -422,6 +434,8 @@ def evaluate(
             labels,
             modality,
             criterion,
+            audio_loss_weight=audio_loss_weight,
+            visual_loss_weight=visual_loss_weight,
         )
         for handle in handles:
             handle.remove()
@@ -752,6 +766,8 @@ def run_training(args: argparse.Namespace) -> dict[str, float]:
             epoch=epoch,
             show_progress=not args.no_progress,
             fgm_state=fgm_state,
+            audio_loss_weight=args.audio_loss_weight,
+            visual_loss_weight=args.visual_loss_weight,
         )
         val_metrics = evaluate(
             model,
@@ -761,6 +777,8 @@ def run_training(args: argparse.Namespace) -> dict[str, float]:
             epoch=epoch,
             split_name="val",
             show_progress=not args.no_progress,
+            audio_loss_weight=args.audio_loss_weight,
+            visual_loss_weight=args.visual_loss_weight,
         )
         scheduler.step()
 
@@ -792,6 +810,8 @@ def run_training(args: argparse.Namespace) -> dict[str, float]:
         args.modality,
         split_name="test",
         show_progress=not args.no_progress,
+        audio_loss_weight=args.audio_loss_weight,
+        visual_loss_weight=args.visual_loss_weight,
     )
     result = {
         "best_epoch": float(best_epoch),
@@ -821,6 +841,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--lr-decay-ratio", type=float, default=0.1)
     parser.add_argument("--momentum", type=float, default=0.9)
     parser.add_argument("--weight-decay", type=float, default=5e-4)
+    parser.add_argument("--audio-loss-weight", type=float, default=1.0)
+    parser.add_argument("--visual-loss-weight", type=float, default=2.0)
     parser.add_argument("--fps", type=int, default=1)
     parser.add_argument("--image-size", type=int, default=224)
     parser.add_argument("--visual-aug", choices=["none", "light", "medium", "strong", "custom"], default="none")
