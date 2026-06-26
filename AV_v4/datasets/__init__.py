@@ -11,7 +11,7 @@ from .cremad import (
     select_frame_indices,
     split_samples_by_actor,
 )
-from .ks import KSDataset, KSSample, discover_ks_samples, load_ks_classes
+from .ks import KSDataset, KSSample, KSTrainImageTransform, discover_ks_samples, load_ks_classes
 from .ave import AVEDataset, AVESample, discover_ave_samples
 
 __all__ = [
@@ -28,6 +28,7 @@ __all__ = [
     "split_samples_by_actor",
     "KSDataset",
     "KSSample",
+    "KSTrainImageTransform",
     "discover_ks_samples",
     "load_ks_classes",
     "AVEDataset",

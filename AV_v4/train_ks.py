@@ -12,7 +12,7 @@ if __package__ is None or __package__ == "":
 import torch
 from torch.utils.data import DataLoader
 
-from AV_v4.datasets import KSDataset, ResizeToTensorNormalize, discover_ks_samples, load_ks_classes
+from AV_v4.datasets import KSDataset, KSTrainImageTransform, ResizeToTensorNormalize, discover_ks_samples, load_ks_classes
 from AV_v4.training import (
     append_epoch_log,
     build_fgm_state,
@@ -34,7 +34,8 @@ def create_dataloaders(args: argparse.Namespace) -> tuple[DataLoader, DataLoader
     train_samples, _ = discover_ks_samples(args.data_root, args.class_file, mode="train")
     test_samples, class_to_idx = discover_ks_samples(args.data_root, args.class_file, mode="test")
     args.num_classes = len(class_to_idx)
-    image_transform = ResizeToTensorNormalize(size=args.image_size)
+    train_image_transform = KSTrainImageTransform(size=args.image_size)
+    eval_image_transform = ResizeToTensorNormalize(size=args.image_size)
 
     train_dataset = KSDataset(
         train_samples,
@@ -45,7 +46,7 @@ def create_dataloaders(args: argparse.Namespace) -> tuple[DataLoader, DataLoader
         n_fft=args.n_fft,
         hop_length=args.hop_length,
         win_length=args.win_length,
-        image_transform=image_transform,
+        image_transform=train_image_transform,
     )
     test_dataset = KSDataset(
         test_samples,
@@ -56,7 +57,7 @@ def create_dataloaders(args: argparse.Namespace) -> tuple[DataLoader, DataLoader
         n_fft=args.n_fft,
         hop_length=args.hop_length,
         win_length=args.win_length,
-        image_transform=image_transform,
+        image_transform=eval_image_transform,
     )
 
     generator = torch.Generator()
@@ -187,8 +188,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--output-dir", type=str, default="runs/ks_baseline")
     parser.add_argument("--modality", choices=["av", "audio", "visual"], default="av")
     parser.add_argument("--epochs", type=int, default=80)
-    parser.add_argument("--batch-size", type=int, default=16)
-    parser.add_argument("--lr", type=float, default=0.005)
+    parser.add_argument("--batch-size", type=int, default=20)
+    parser.add_argument("--lr", type=float, default=0.002)
     parser.add_argument("--lr-scheduler", choices=["multistep", "cosine"], default="multistep")
     parser.add_argument("--lr-decay-step", type=str, default="[30,50,70]")
     parser.add_argument("--lr-decay-ratio", type=float, default=0.1)

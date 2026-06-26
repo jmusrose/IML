@@ -11,7 +11,7 @@ import torch
 from PIL import Image
 from torch.utils.data import Dataset
 
-from .cremad import ResizeToTensorNormalize, read_wav_mono, waveform_to_log_spectrogram
+from .cremad import CREMADTrainImageTransform, ResizeToTensorNormalize, read_wav_mono, waveform_to_log_spectrogram
 
 
 @dataclass(frozen=True)
@@ -21,6 +21,28 @@ class KSSample:
     label: int
     audio_path: Path
     image_dir: Path
+
+
+class KSTrainImageTransform(CREMADTrainImageTransform):
+    """ICCV/GDL-style KS train transform: random resized crop, flip, normalize."""
+
+    def __init__(
+        self,
+        size: int = 224,
+        mean: tuple[float, float, float] = (0.485, 0.456, 0.406),
+        std: tuple[float, float, float] = (0.229, 0.224, 0.225),
+        scale: tuple[float, float] = (0.08, 1.0),
+        ratio: tuple[float, float] = (3.0 / 4.0, 4.0 / 3.0),
+        horizontal_flip_prob: float = 0.5,
+    ) -> None:
+        super().__init__(
+            size=size,
+            mean=mean,
+            std=std,
+            scale=scale,
+            ratio=ratio,
+            horizontal_flip_prob=horizontal_flip_prob,
+        )
 
 
 def load_ks_classes(class_file: str | os.PathLike[str]) -> list[str]:
