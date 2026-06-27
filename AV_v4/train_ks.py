@@ -22,6 +22,8 @@ from AV_v4.training import (
     format_metrics,
     format_epoch_report,
     plot_history,
+    clone_model_state_dict,
+    prepare_run_output_dir,
     save_checkpoint,
     seed_worker,
     set_seed,
@@ -95,8 +97,7 @@ def run_training(args: argparse.Namespace) -> dict[str, float]:
     fgm_state = build_fgm_state(args)
     scheduler = build_scheduler(optimizer, args)
 
-    output_dir = Path(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir = prepare_run_output_dir(args)
     config = vars(args)
     (output_dir / "config.json").write_text(json.dumps(config, indent=2), encoding="utf-8")
     history_path = output_dir / "history.jsonl"
@@ -107,8 +108,12 @@ def run_training(args: argparse.Namespace) -> dict[str, float]:
     best_val_acc = -1.0
     best_epoch = 0
     best_metrics: dict[str, float] = {}
+    best_state_dict: dict[str, torch.Tensor] | None = None
 
-    print(f"KS classes: {args.num_classes} ({load_ks_classes(args.class_file)})")
+    if hasattr(args, "class_file"):
+        print(f"KS classes: {args.num_classes} ({load_ks_classes(args.class_file)})")
+    else:
+        print(f"KS classes: {args.num_classes}")
     print(f"Split sizes: {sizes}")
     for epoch in range(1, args.epochs + 1):
         train_metrics = train_one_epoch(
@@ -153,10 +158,10 @@ def run_training(args: argparse.Namespace) -> dict[str, float]:
             best_val_acc = val_metrics["acc"]
             best_epoch = epoch
             best_metrics = {"train": train_metrics, "val": val_metrics}
-            save_checkpoint(output_dir / "best.pt", model, optimizer, epoch, best_metrics, args)
+            best_state_dict = clone_model_state_dict(model)
 
-    best_state = torch.load(output_dir / "best.pt", map_location=device, weights_only=False)
-    model.load_state_dict(best_state["model"])
+    if best_state_dict is not None:
+        model.load_state_dict(best_state_dict)
     test_metrics = evaluate(
         model,
         test_loader,
@@ -187,9 +192,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--class-file", type=str, default="ICCV2025-GDL-main/dataset/data/KineticSound/class.txt")
     parser.add_argument("--output-dir", type=str, default="runs/ks_baseline")
     parser.add_argument("--modality", choices=["av", "audio", "visual"], default="av")
-    parser.add_argument("--epochs", type=int, default=80)
+    parser.add_argument("--epochs", type=int, default=120)
     parser.add_argument("--batch-size", type=int, default=20)
-    parser.add_argument("--lr", type=float, default=0.002)
+    parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument("--lr-scheduler", choices=["multistep", "cosine"], default="multistep")
     parser.add_argument("--lr-decay-step", type=str, default="[30,50,70]")
     parser.add_argument("--lr-decay-ratio", type=float, default=0.1)

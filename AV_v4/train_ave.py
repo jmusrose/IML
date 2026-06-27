@@ -23,6 +23,8 @@ from AV_v4.training import (
     format_metrics,
     format_epoch_report,
     plot_history,
+    clone_model_state_dict,
+    prepare_run_output_dir,
     save_checkpoint,
     seed_worker,
     set_seed,
@@ -84,8 +86,7 @@ def run_training(args: argparse.Namespace) -> dict[str, float]:
     fgm_state = build_fgm_state(args)
     scheduler = build_scheduler(optimizer, args)
 
-    output_dir = Path(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir = prepare_run_output_dir(args)
     (output_dir / "config.json").write_text(json.dumps(vars(args), indent=2), encoding="utf-8")
     history_path = output_dir / "history.jsonl"
     history_json_path = output_dir / "history.json"
@@ -95,6 +96,7 @@ def run_training(args: argparse.Namespace) -> dict[str, float]:
     best_val_acc = -1.0
     best_epoch = 0
     best_metrics: dict[str, float] = {}
+    best_state_dict: dict[str, torch.Tensor] | None = None
 
     print(f"AVE classes: {args.num_classes}")
     print(f"Split sizes: {sizes}")
@@ -157,10 +159,10 @@ def run_training(args: argparse.Namespace) -> dict[str, float]:
             best_val_acc = val_metrics["acc"]
             best_epoch = epoch
             best_metrics = {"train": train_metrics, "val": val_metrics}
-            save_checkpoint(output_dir / "best.pt", model, optimizer, epoch, best_metrics, args)
+            best_state_dict = clone_model_state_dict(model)
 
-    best_state = torch.load(output_dir / "best.pt", map_location=device, weights_only=False)
-    model.load_state_dict(best_state["model"])
+    if best_state_dict is not None:
+        model.load_state_dict(best_state_dict)
     test_metrics = evaluate(
         model,
         test_loader,

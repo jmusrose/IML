@@ -4,6 +4,7 @@ import argparse
 import ast
 import json
 import random
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -50,6 +51,33 @@ def build_model(modality: str, num_classes: int = 6) -> nn.Module:
     if modality == "visual":
         return VisualBaseline(num_classes=num_classes)
     raise ValueError(f"Unsupported modality: {modality}")
+
+
+def prepare_run_output_dir(args: argparse.Namespace) -> Path:
+    parent_dir = Path(args.output_dir)
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+    fields = [
+        timestamp,
+        f"seed{getattr(args, 'seed', 0)}",
+        f"lr{getattr(args, 'lr', 0):g}",
+        f"bs{getattr(args, 'batch_size', 0)}",
+    ]
+    if hasattr(args, "audio_loss_weight"):
+        fields.append(f"aw{getattr(args, 'audio_loss_weight'):g}")
+    if hasattr(args, "visual_loss_weight"):
+        fields.append(f"vw{getattr(args, 'visual_loss_weight'):g}")
+    run_dir = parent_dir / "_".join(fields)
+    suffix = 1
+    while run_dir.exists():
+        run_dir = parent_dir / ("_".join(fields) + f"_{suffix:02d}")
+        suffix += 1
+    run_dir.mkdir(parents=True, exist_ok=False)
+    args.output_dir = str(run_dir)
+    return run_dir
+
+
+def clone_model_state_dict(model: nn.Module) -> dict[str, torch.Tensor]:
+    return {name: tensor.detach().cpu().clone() for name, tensor in model.state_dict().items()}
 
 
 def build_fgm_state(args: argparse.Namespace) -> CMIFGMState | None:
