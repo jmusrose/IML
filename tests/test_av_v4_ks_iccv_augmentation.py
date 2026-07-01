@@ -6,7 +6,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
-def test_av_v4_ks_train_loader_uses_iccv_visual_augmentation(monkeypatch):
+def test_av_v4_ks_train_loader_uses_medium_visual_augmentation(monkeypatch):
     from AV_v4 import train_ks
     from AV_v4.datasets import KSTrainImageTransform, ResizeToTensorNormalize
 
@@ -47,7 +47,7 @@ def test_av_v4_ks_train_loader_uses_iccv_visual_augmentation(monkeypatch):
     test_transform = test_loader.dataset.image_transform
     assert isinstance(train_transform, KSTrainImageTransform)
     assert train_transform.size == 224
-    assert train_transform.scale == (0.08, 1.0)
+    assert train_transform.scale == (0.5, 1.0)
     assert train_transform.ratio == (3.0 / 4.0, 4.0 / 3.0)
     assert train_transform.horizontal_flip_prob == 0.5
     assert isinstance(test_transform, ResizeToTensorNormalize)

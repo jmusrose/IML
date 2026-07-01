@@ -24,14 +24,14 @@ class KSSample:
 
 
 class KSTrainImageTransform(CREMADTrainImageTransform):
-    """ICCV/GDL-style KS train transform: random resized crop, flip, normalize."""
+    """KS train transform with medium random crop, flip, and ImageNet normalization."""
 
     def __init__(
         self,
         size: int = 224,
         mean: tuple[float, float, float] = (0.485, 0.456, 0.406),
         std: tuple[float, float, float] = (0.229, 0.224, 0.225),
-        scale: tuple[float, float] = (0.08, 1.0),
+        scale: tuple[float, float] = (0.5, 1.0),
         ratio: tuple[float, float] = (3.0 / 4.0, 4.0 / 3.0),
         horizontal_flip_prob: float = 0.5,
     ) -> None:
