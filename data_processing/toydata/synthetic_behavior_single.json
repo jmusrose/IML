@@ -1,0 +1,106 @@
+{
+  "kind": "synthetic_illustration",
+  "note": "Illustrative values only; not measured training results.",
+  "normalization": "normalized_strength = fgm_strength_bits / 2",
+  "records": [
+    {
+      "s": 0.0,
+      "true_cmi": 0.0,
+      "probe_acc_a": 0.965,
+      "probe_acc_b": 0.925,
+      "fgm_r_a": 0.506,
+      "fgm_r_b": 0.494,
+      "fgm_strength_bits": 0.03
+    },
+    {
+      "s": 0.1,
+      "true_cmi": 0.1,
+      "probe_acc_a": 0.94,
+      "probe_acc_b": 0.89,
+      "fgm_r_a": 0.508,
+      "fgm_r_b": 0.492,
+      "fgm_strength_bits": 0.18
+    },
+    {
+      "s": 0.2,
+      "true_cmi": 0.2,
+      "probe_acc_a": 0.91,
+      "probe_acc_b": 0.85,
+      "fgm_r_a": 0.507,
+      "fgm_r_b": 0.493,
+      "fgm_strength_bits": 0.42
+    },
+    {
+      "s": 0.3,
+      "true_cmi": 0.3,
+      "probe_acc_a": 0.88,
+      "probe_acc_b": 0.81,
+      "fgm_r_a": 0.51,
+      "fgm_r_b": 0.49,
+      "fgm_strength_bits": 0.58
+    },
+    {
+      "s": 0.4,
+      "true_cmi": 0.4,
+      "probe_acc_a": 0.84,
+      "probe_acc_b": 0.77,
+      "fgm_r_a": 0.509,
+      "fgm_r_b": 0.491,
+      "fgm_strength_bits": 0.81
+    },
+    {
+      "s": 0.5,
+      "true_cmi": 0.5,
+      "probe_acc_a": 0.8,
+      "probe_acc_b": 0.72,
+      "fgm_r_a": 0.505,
+      "fgm_r_b": 0.495,
+      "fgm_strength_bits": 1.03
+    },
+    {
+      "s": 0.6,
+      "true_cmi": 0.6,
+      "probe_acc_a": 0.76,
+      "probe_acc_b": 0.68,
+      "fgm_r_a": 0.508,
+      "fgm_r_b": 0.492,
+      "fgm_strength_bits": 1.18
+    },
+    {
+      "s": 0.7,
+      "true_cmi": 0.7,
+      "probe_acc_a": 0.72,
+      "probe_acc_b": 0.63,
+      "fgm_r_a": 0.507,
+      "fgm_r_b": 0.493,
+      "fgm_strength_bits": 1.42
+    },
+    {
+      "s": 0.8,
+      "true_cmi": 0.8,
+      "probe_acc_a": 0.69,
+      "probe_acc_b": 0.59,
+      "fgm_r_a": 0.51,
+      "fgm_r_b": 0.49,
+      "fgm_strength_bits": 1.58
+    },
+    {
+      "s": 0.9,
+      "true_cmi": 0.9,
+      "probe_acc_a": 0.66,
+      "probe_acc_b": 0.54,
+      "fgm_r_a": 0.506,
+      "fgm_r_b": 0.494,
+      "fgm_strength_bits": 1.82
+    },
+    {
+      "s": 1.0,
+      "true_cmi": 1.0,
+      "probe_acc_a": 0.63,
+      "probe_acc_b": 0.5,
+      "fgm_r_a": 0.509,
+      "fgm_r_b": 0.491,
+      "fgm_strength_bits": 1.97
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "data_root": "dataset/nyud2_trainvaltest",
+  "output_dir": "runs\\rgb_v4_nyud2\\20260713-164043-711380_seed42_lr0.001_bs32",
+  "epochs": 120,
+  "batch_size": 32,
+  "lr": 0.001,
+  "lr_scheduler": "multistep",
+  "lr_decay_step": "[40,80]",
+  "lr_decay_ratio": 0.1,
+  "momentum": 0.9,
+  "weight_decay": 0.0001,
+  "rgb_loss_weight": 1.0,
+  "depth_loss_weight": 1.0,
+  "image_size": 224,
+  "seed": 42,
+  "num_workers": 4,
+  "device": "cuda",
+  "pin_memory": true,
+  "deterministic": false,
+  "no_progress": false,
+  "robustness_noise_view": "depth",
+  "robustness_epsilons": [
+    5.0,
+    10.0
+  ],
+  "num_classes": 10
+}
